@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TronLink Signer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f0f0f;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container {
+    background: #1a1a2e;
+    border-radius: 16px;
+    padding: 32px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  h1 {
+    font-size: 20px;
+    margin-bottom: 8px;
+    color: #fff;
+  }
+  .type-badge {
+    display: inline-block;
+    background: #2a2a4e;
+    color: #8888cc;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 20px;
+  }
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid #2a2a3e;
+    font-size: 14px;
+  }
+  .detail-row .label { color: #888; }
+  .detail-row .value {
+    color: #e0e0e0;
+    word-break: break-all;
+    text-align: right;
+    max-width: 60%;
+  }
+  .status {
+    margin-top: 20px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .status.info    { background: #1a2a4e; color: #6ea8fe; }
+  .status.success { background: #1a3a2a; color: #75d9a0; }
+  .status.error   { background: #3a1a1a; color: #f87171; }
+  .status.waiting { background: #3a3a1a; color: #fbbf24; }
+  .buttons {
+    display: flex;
+    gap: 12px;
+    margin-top: 24px;
+  }
+  .buttons button {
+    flex: 1;
+    padding: 14px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .buttons button:hover { opacity: 0.85; }
+  .buttons button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-approve { background: #c23631; color: #fff; }
+  .btn-reject  { background: #2a2a3e; color: #aaa; }
+  #details { margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>TronLink Signer</h1>
+  <div style="display:flex;gap:8px;margin-bottom:16px;">
+    <div id="typeBadge" class="type-badge" style="display:none"></div>
+    <div id="networkBadge" class="type-badge" style="display:none"></div>
+  </div>
+  <div id="details"></div>
+  <div id="status" class="status info">Loading request...</div>
+  <div id="retryGroup" class="buttons" style="display:none">
+    <button class="btn-approve" id="retryBtn">Retry</button>
+  </div>
+  <div id="buttonGroup" class="buttons" style="display:none">
+    <button class="btn-approve" id="approveBtn">Approve</button>
+    <button class="btn-reject" id="rejectBtn">Reject</button>
+  </div>
+</div>
+<script>
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  const requestId = params.get('requestId');
+  const statusEl = document.getElementById('status');
+  const detailsEl = document.getElementById('details');
+  const typeBadgeEl = document.getElementById('typeBadge');
+  const networkBadgeEl = document.getElementById('networkBadge');
+  const buttonGroup = document.getElementById('buttonGroup');
+  const retryGroup = document.getElementById('retryGroup');
+  const retryBtn = document.getElementById('retryBtn');
+  const approveBtn = document.getElementById('approveBtn');
+  const rejectBtn = document.getElementById('rejectBtn');
+
+  let pendingRequest = null;
+  let _providerDetail = null; // TIP-6963 discovered provider
+
+  function setStatus(msg, type) {
+    statusEl.textContent = msg;
+    statusEl.className = 'status ' + type;
+  }
+
+  function addDetail(label, value) {
+    const row = document.createElement('div');
+    row.className = 'detail-row';
+    row.innerHTML = '<span class="label">' + label + '</span><span class="value">' + escapeHtml(String(value)) + '</span>';
+    detailsEl.appendChild(row);
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  var NETWORK_NAMES = {
+    mainnet: 'Mainnet',
+    nile: 'Nile Testnet',
+    shasta: 'Shasta Testnet'
+  };
+
+  function renderDetails(req) {
+    typeBadgeEl.textContent = req.type;
+    typeBadgeEl.style.display = 'inline-block';
+    if (req.network) {
+      networkBadgeEl.textContent = NETWORK_NAMES[req.network] || req.network;
+      networkBadgeEl.style.display = 'inline-block';
+    }
+    detailsEl.innerHTML = '';
+
+    var data = req.data || {};
+    switch (req.type) {
+      case 'connect':
+        addDetail('Action', 'Connect Wallet');
+        break;
+      case 'send_trx':
+        addDetail('To', data.to);
+        addDetail('Amount', data.amount + ' TRX');
+        break;
+      case 'send_trc20':
+        addDetail('Contract', data.contractAddress);
+        addDetail('To', data.to);
+        addDetail('Amount', data.amount);
+        addDetail('Decimals', data.decimals);
+        break;
+      case 'sign_message':
+        addDetail('Message', data.message);
+        break;
+      case 'sign_typed_data':
+        addDetail('Typed Data', JSON.stringify(data.typedData, null, 2));
+        break;
+      case 'sign_transaction':
+        addDetail('Transaction', JSON.stringify(data.transaction, null, 2));
+        break;
+    }
+  }
+
+  // --- TIP-6963 Wallet Discovery ---
+
+  function discoverWallets() {
+    window.addEventListener('TIP6963:announceProvider', function(e) {
+      if (!_providerDetail) {
+        _providerDetail = e.detail;
+      }
+    });
+    window.dispatchEvent(new Event('TIP6963:requestProvider'));
+  }
+
+  // Get the TIP-6963 provider (or fallback to window.tron / window.tronLink)
+  function getProvider() {
+    if (_providerDetail && _providerDetail.provider) {
+      return _providerDetail.provider;
+    }
+    return window.tron || window.tronLink || null;
+  }
+
+  // Get tronWeb from provider or fallback
+  function getTronWeb() {
+    var provider = getProvider();
+    if (provider && provider.tronWeb) {
+      return provider.tronWeb;
+    }
+    return window.tronWeb || null;
+  }
+
+  function waitForWallet(maxWait) {
+    maxWait = maxWait || 5000;
+    // Start TIP-6963 discovery
+    discoverWallets();
+
+    return new Promise(function(resolve, reject) {
+      if (getProvider()) { resolve(true); return; }
+
+      var elapsed = 0;
+      var interval = setInterval(function() {
+        elapsed += 200;
+        if (getProvider()) {
+          clearInterval(interval);
+          resolve(true);
+        } else if (elapsed >= maxWait) {
+          clearInterval(interval);
+          reject(new Error('No TRON wallet found. Please install TronLink extension.'));
+        }
+      }, 200);
+    });
+  }
+
+  // --- Wallet Connection & Network ---
+
+  async function ensureConnected() {
+    var tronWeb = getTronWeb();
+    if (!tronWeb || !tronWeb.defaultAddress || !tronWeb.defaultAddress.base58) {
+      await getProvider().request({ method: 'tron_requestAccounts' });
+      await new Promise(function(r) { setTimeout(r, 500); });
+    }
+  }
+
+  var NETWORK_CHAIN_IDS = {
+    mainnet: '0x2b6653dc',
+    nile: '0xcd8690dc',
+    shasta: '0x94a9059e'
+  };
+
+  var NETWORK_FULL_HOSTS = {
+    mainnet: 'https://api.trongrid.io',
+    nile: 'https://nile.trongrid.io',
+    shasta: 'https://api.shasta.trongrid.io'
+  };
+
+  async function ensureWalletReady(expectedNetwork) {
+    var provider = getProvider();
+
+    // Step 1: Unlock wallet if locked
+    setStatus('Connecting wallet...', 'waiting');
+    var accountRes = await provider.request({ method: 'eth_requestAccounts' });
+    if (accountRes && accountRes.code === 4001) {
+      throw new Error('User rejected wallet connection.');
+    }
+
+    // Step 2: Check if wallet is ready
+    var tronWeb = getTronWeb();
+    if (!tronWeb || !tronWeb.defaultAddress || !tronWeb.defaultAddress.base58) {
+      await new Promise(function(r) { setTimeout(r, 1000); });
+      tronWeb = getTronWeb();
+      if (!tronWeb || !tronWeb.defaultAddress || !tronWeb.defaultAddress.base58) {
+        throw new Error('Wallet not ready. Please unlock TronLink and refresh.');
+      }
+    }
+
+    // Step 3: Check network and switch if needed
+    if (expectedNetwork) {
+      var currentHost = tronWeb.fullNode.host;
+      var expectedHost = NETWORK_FULL_HOSTS[expectedNetwork];
+      if (expectedHost && currentHost !== expectedHost) {
+        setStatus('Switching to ' + expectedNetwork + ' network...', 'waiting');
+        var chainId = NETWORK_CHAIN_IDS[expectedNetwork];
+        if (chainId) {
+          try {
+            await provider.request({
+              method: 'wallet_switchEthereumChain',
+              params: [{ chainId: chainId }]
+            });
+            await new Promise(function(r) { setTimeout(r, 1500); });
+          } catch (switchErr) {
+            throw new Error('Please switch TronLink to ' + expectedNetwork + ' network manually then click Retry.');
+          }
+        }
+      }
+    }
+  }
+
+  // --- Execute Actions ---
+
+  async function executeTronAction(req) {
+    await ensureConnected();
+    var tronWeb = getTronWeb();
+    var data = req.data || {};
+
+    switch (req.type) {
+      case 'connect': {
+        return { address: tronWeb.defaultAddress.base58 };
+      }
+      case 'send_trx': {
+        var tx = await tronWeb.transactionBuilder.sendTrx(data.to, tronWeb.toSun(data.amount));
+        var signedTx = await tronWeb.trx.sign(tx);
+        var broadcast = await tronWeb.trx.sendRawTransaction(signedTx);
+        return { txId: broadcast.txid };
+      }
+      case 'send_trc20': {
+        var contract = await tronWeb.contract().at(data.contractAddress);
+        var decimals = data.decimals || 6;
+        var rawAmount = BigInt(data.amount) * BigInt(10 ** decimals);
+        var txId = await contract.methods.transfer(data.to, rawAmount.toString()).send();
+        return { txId: txId };
+      }
+      case 'sign_message': {
+        var signature = await tronWeb.trx.signMessageV2(data.message);
+        return { signature: signature };
+      }
+      case 'sign_typed_data': {
+        var typedData = data.typedData;
+        var domain = typedData.domain;
+        var types = Object.assign({}, typedData.types);
+        delete types.EIP712Domain;
+        var message = typedData.message;
+        var sig = await tronWeb.trx._signTypedData(domain, types, message);
+        return { signature: sig };
+      }
+      case 'sign_transaction': {
+        var signed = await tronWeb.trx.sign(data.transaction);
+        return { signedTransaction: signed };
+      }
+      default:
+        throw new Error('Unknown request type: ' + req.type);
+    }
+  }
+
+  // --- Request Handling ---
+
+  async function completeRequest(id, success, resultOrError) {
+    var body = success
+      ? { success: true, result: resultOrError }
+      : { success: false, error: resultOrError };
+    await fetch('/api/complete/' + id, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function disableButtons() {
+    approveBtn.disabled = true;
+    rejectBtn.disabled = true;
+  }
+
+  async function tryEnsureWallet() {
+    retryGroup.style.display = 'none';
+    buttonGroup.style.display = 'none';
+    try {
+      await ensureWalletReady(pendingRequest.network);
+      setStatus('Ready. Review and approve or reject.', 'info');
+      buttonGroup.style.display = 'flex';
+    } catch (e) {
+      setStatus(e.message, 'error');
+      retryGroup.style.display = 'flex';
+    }
+  }
+
+  retryBtn.addEventListener('click', function() {
+    tryEnsureWallet();
+  });
+
+  async function init() {
+    if (!requestId) {
+      setStatus('Missing request ID in URL.', 'error');
+      return;
+    }
+
+    try {
+      var res = await fetch('/api/pending/' + requestId);
+      if (!res.ok) {
+        setStatus('Request not found or expired.', 'error');
+        return;
+      }
+      pendingRequest = await res.json();
+      renderDetails(pendingRequest);
+      setStatus('Discovering wallets...', 'waiting');
+
+      try {
+        await waitForWallet(5000);
+        if (_providerDetail && _providerDetail.info) {
+          setStatus('Found wallet: ' + _providerDetail.info.name, 'info');
+        }
+      } catch (e) {
+        setStatus(e.message, 'error');
+        return;
+      }
+
+      await tryEnsureWallet();
+    } catch (e) {
+      setStatus('Failed to load request: ' + e.message, 'error');
+    }
+  }
+
+  approveBtn.addEventListener('click', async function() {
+    disableButtons();
+    setStatus('Processing with wallet...', 'waiting');
+    try {
+      var result = await executeTronAction(pendingRequest);
+      await completeRequest(requestId, true, result);
+      setStatus('Approved and completed successfully.', 'success');
+    } catch (e) {
+      var msg = e.message || String(e);
+      await completeRequest(requestId, false, msg);
+      setStatus('Error: ' + msg, 'error');
+    }
+  });
+
+  rejectBtn.addEventListener('click', async function() {
+    disableButtons();
+    setStatus('Rejected.', 'error');
+    await completeRequest(requestId, false, 'USER_REJECTED');
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>

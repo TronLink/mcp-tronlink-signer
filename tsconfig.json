@@ -1,0 +1,7 @@
+{
+  "references": [
+    { "path": "./packages/tronlink-signer" },
+    { "path": "./packages/mcp-tronlink-signer" }
+  ],
+  "files": []
+}
