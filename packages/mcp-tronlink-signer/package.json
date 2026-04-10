@@ -1,6 +1,6 @@
 {
   "name": "mcp-tronlink-signer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP Server for signing Tron transactions via TronLink browser wallet",
   "type": "module",
   "main": "./dist/index.js",
