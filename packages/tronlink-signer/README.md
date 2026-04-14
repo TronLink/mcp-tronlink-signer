@@ -16,7 +16,7 @@ import { TronSigner } from "tronlink-signer";
 const signer = new TronSigner();
 await signer.start();
 
-const { address } = await signer.connectWallet();
+const { address, network } = await signer.connectWallet();
 const { txId } = await signer.sendTrx("TXxx...", 1);
 const { balance } = await signer.getBalance("TXxx...");
 
@@ -41,9 +41,9 @@ Stops the server and clears all pending requests.
 
 Returns the current configuration.
 
-### `signer.connectWallet(network?: TronNetwork): Promise<{ address: string }>`
+### `signer.connectWallet(network?: TronNetwork): Promise<{ address: string; network: string }>`
 
-Opens the browser to connect TronLink and retrieve the wallet address.
+Opens the browser to connect TronLink and retrieve the wallet address and current network. If the wallet is already connected (same browser tab still open), auto-completes without user interaction.
 
 ### `signer.sendTrx(to, amount, network?): Promise<{ txId: string }>`
 
@@ -63,7 +63,7 @@ Sends TRC20 tokens. Opens a browser approval page.
 | --------- | ---- | ----------- |
 | `contractAddress` | `string` | TRC20 token contract address |
 | `to` | `string` | Recipient Tron address (base58) |
-| `amount` | `string` | Amount in smallest unit |
+| `amount` | `string` | Amount in token units (supports decimals, e.g., `"0.01"`) |
 | `decimals` | `number` | Token decimals (default: 6) |
 | `network` | `TronNetwork` | Optional network override |
 
@@ -97,14 +97,16 @@ Gets TRX balance for an address. No browser approval needed.
 ## How It Works
 
 1. Your code calls a signing method (e.g., `signMessage`)
-2. A local HTTP server starts on port 3386 and the browser opens an approval page
+2. A local HTTP server starts on port 3386 and a **single browser tab** opens the approval page
 3. The approval page discovers the wallet via **TIP-6963** protocol (fallback to `window.tron`)
 4. Auto-unlocks wallet and switches network if needed
-5. User reviews and clicks Approve / Reject
-6. TronLink handles signing in the browser
-7. The result is returned to your code
+5. For `connectWallet`, if the wallet is already connected, it auto-completes without user interaction
+6. For signing/sending, the user reviews the transaction details and clicks Approve / Reject
+7. The approval page parses transaction types (TRX transfer, TRC20, TRC721 NFT, stake, delegate, vote, etc.) into human-readable display
+8. TronLink handles signing in the browser
+9. The result is returned to your code — the page stays open and polls for the next request
 
-The local server binds to `127.0.0.1` only. If port 3386 is in use, it auto-increments. Requests timeout after 5 minutes.
+All subsequent operations reuse the same browser tab. The page detects server disconnection via heartbeat and shows a session expired message. The local server binds to `127.0.0.1` only. If port 3386 is in use, it auto-increments. Requests timeout after 5 minutes. The server gracefully shuts down on process exit (SIGINT/SIGTERM).
 
 ## Networks
 

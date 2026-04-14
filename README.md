@@ -51,8 +51,8 @@ import { TronSigner } from "tronlink-signer";
 const signer = new TronSigner();
 await signer.start();
 
-// Each signing operation automatically handles wallet connection
-// and network switching in a single approval page.
+// First operation opens a browser tab; subsequent ones reuse it.
+const { address, network } = await signer.connectWallet();
 const { signature } = await signer.signMessage("hello world");
 const { txId } = await signer.sendTrx("TXxx...", 1);
 const { balance } = await signer.getBalance("TXxx..."); // No browser needed
@@ -65,14 +65,15 @@ See [tronlink-signer README](./packages/tronlink-signer) for full API documentat
 ## How It Works
 
 1. AI agent (or your code) calls a signing method (e.g., `send_trx`)
-2. Local HTTP server starts on port 3386 and browser opens an approval page
+2. Local HTTP server starts on port 3386 and a **single browser tab** opens the approval page
 3. Approval page discovers wallet via **TIP-6963** protocol (fallback to `window.tron` / `window.tronLink`)
 4. Auto-unlocks wallet and switches network if needed
-5. User reviews the request and clicks Approve / Reject
-6. TronLink extension handles signing in the browser
-7. Result is returned to the caller
+5. If the wallet is already connected, `connect_wallet` auto-completes without user interaction
+6. User reviews the request and clicks Approve / Reject
+7. TronLink extension handles signing in the browser
+8. Result is returned to the caller — the page stays open and polls for the next request
 
-Private keys never leave the TronLink wallet.
+All subsequent operations reuse the same browser tab. The page detects server disconnection via heartbeat and shows a session expired message. Private keys never leave the TronLink wallet.
 
 ## Environment Variables
 
@@ -105,11 +106,17 @@ packages/
 │   └── src/
 │       ├── tron-signer.ts      # Core signing class
 │       ├── pending-store.ts    # Async request queue
-│       ├── http-server.ts      # Local HTTP server
-│       ├── browser.ts          # Browser open helper
+│       ├── http-server.ts      # Local HTTP server + JS file serving
+│       ├── browser.ts          # Browser open helper with heartbeat detection
 │       ├── config.ts           # Network config
 │       ├── types.ts            # Type definitions
-│       └── web/index.html      # Approval page SPA (TIP-6963)
+│       └── web/
+│           ├── index.html      # Approval page (HTML + CSS only)
+│           └── js/
+│               ├── wallet.js   # Wallet discovery, connection, network
+│               ├── tx-parser.js # Transaction type parsing + async data fetch
+│               ├── actions.js  # Execute wallet actions (sign, send)
+│               └── app.js      # Polling, request lifecycle, UI events
 └── mcp-tronlink-signer/        # MCP Server layer
     └── src/
         ├── server.ts           # MCP tools/resources/prompts

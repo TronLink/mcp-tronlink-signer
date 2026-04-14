@@ -68,13 +68,15 @@ All tools support an optional `network` parameter (`mainnet` / `nile` / `shasta`
 
 ## How It Works
 
-1. AI agent calls an MCP tool (e.g., `send_trx`)
-2. The server delegates to `tronlink-signer`, which starts a local HTTP server and opens a browser approval page
+1. AI agent calls an MCP tool (e.g., `send_trx`) — a signing notice is shown in the CLI
+2. The server delegates to `tronlink-signer`, which opens a **single browser tab** for approval (reuses existing tab if open)
 3. The approval page discovers TronLink via **TIP-6963** protocol
 4. Auto-unlocks wallet and switches network if needed
-5. User reviews and approves in the browser
-6. TronLink signs the transaction — private keys never leave the wallet
-7. Result is returned to the AI agent
+5. `connect_wallet` auto-completes if the wallet is already connected
+6. Transaction details are parsed into human-readable format (TRX transfer, TRC20, TRC721 NFT, stake, delegate, vote, etc.)
+7. User reviews and approves in the browser
+8. TronLink signs the transaction — private keys never leave the wallet
+9. Result is returned to the AI agent — the page stays open for the next operation
 
 ## Environment Variables
 
