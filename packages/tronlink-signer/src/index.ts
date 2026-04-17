@@ -11,4 +11,6 @@ export type {
   SignMessageData,
   SignTypedDataData,
   SignTransactionData,
+  SignerOptions,
+  WaitForTransactionOptions,
 } from "./types.js";

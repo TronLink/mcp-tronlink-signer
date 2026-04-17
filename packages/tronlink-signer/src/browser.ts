@@ -3,13 +3,17 @@ import open from "open";
 let pageOpened = false;
 let lastHeartbeat = 0;
 
-const HEARTBEAT_TIMEOUT = 10_000; // 10s no heartbeat = page closed
+const HEARTBEAT_TIMEOUT = 5_000;
 
 export function recordHeartbeat(): void {
   lastHeartbeat = Date.now();
 }
 
-function isPageAlive(): boolean {
+export function getLastHeartbeat(): number {
+  return lastHeartbeat;
+}
+
+export function isPageAlive(): boolean {
   if (!pageOpened) return false;
   if (lastHeartbeat === 0) return false;
   return Date.now() - lastHeartbeat < HEARTBEAT_TIMEOUT;

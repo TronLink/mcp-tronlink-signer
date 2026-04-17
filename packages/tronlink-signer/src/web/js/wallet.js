@@ -110,19 +110,36 @@
     if (expectedNetwork) {
       var currentHost = tronWeb.fullNode.host;
       var expectedHost = NETWORK_FULL_HOSTS[expectedNetwork];
+      console.error('[ensureWalletReady] host check', { expectedNetwork: expectedNetwork, currentHost: currentHost, expectedHost: expectedHost, mismatch: currentHost !== expectedHost });
       if (expectedHost && currentHost !== expectedHost) {
         setStatus('Switching to ' + expectedNetwork + ' network...', 'waiting');
         var chainId = NETWORK_CHAIN_IDS[expectedNetwork];
-        if (chainId) {
-          try {
-            await provider.request({
-              method: 'wallet_switchEthereumChain',
-              params: [{ chainId: chainId }]
-            });
-            await new Promise(function(r) { setTimeout(r, 1500); });
-          } catch (switchErr) {
-            throw new Error('Please switch TronLink to ' + expectedNetwork + ' network manually then click Retry.');
-          }
+        if (!chainId) {
+          throw new Error('Unknown network ' + expectedNetwork + '. Please switch TronLink manually then click Retry.');
+        }
+        console.error('[ensureWalletReady] calling wallet_switchEthereumChain', chainId);
+        suppressNodeChange(10000);
+        try {
+          var switchRes = await provider.request({
+            method: 'wallet_switchEthereumChain',
+            params: [{ chainId: chainId }]
+          });
+          console.error('[ensureWalletReady] switch returned', switchRes);
+        } catch (switchErr) {
+          console.error('[ensureWalletReady] switch threw', switchErr);
+          throw new Error('Please switch TronLink to ' + expectedNetwork + ' network manually then click Retry.');
+        }
+        var deadline = Date.now() + 5000;
+        var nowHost = currentHost;
+        while (Date.now() < deadline) {
+          await new Promise(function(r) { setTimeout(r, 300); });
+          var tw = getTronWeb();
+          nowHost = tw && tw.fullNode ? tw.fullNode.host : null;
+          if (nowHost === expectedHost) break;
+        }
+        console.error('[ensureWalletReady] after poll', { nowHost: nowHost, matched: nowHost === expectedHost });
+        if (nowHost !== expectedHost) {
+          throw new Error('Please switch TronLink to ' + expectedNetwork + ' network manually then click Retry.');
         }
       }
     }
@@ -142,6 +159,37 @@
     return 'unknown';
   }
 
+  // Listen for TronLink wallet-change notifications (postMessage-based).
+  // Normalize the three TronLink actions (setAccount / setNode / disconnectWeb)
+  // plus EIP-1193 accountsChanged into a single callback with a short reason.
+  var _onWalletChanged = null;
+  // setNode events that fire while we're actively driving a network switch
+  // (ensureWalletReady → wallet_switchEthereumChain) are our own doing, not a
+  // real user-initiated wallet change — don't treat them as cancellation.
+  var _suppressNodeChangeUntil = 0;
+
+  function setOnWalletChanged(cb) {
+    _onWalletChanged = typeof cb === 'function' ? cb : null;
+  }
+
+  function suppressNodeChange(ms) {
+    _suppressNodeChangeUntil = Date.now() + (ms || 10000);
+  }
+
+  window.addEventListener('message', function(e) {
+    if (!e.data || !e.data.isTronLink || !e.data.message) return;
+    var m = e.data.message;
+    var reason = null;
+    if (m.action === 'setAccount' || m.action === 'accountsChanged') reason = 'account';
+    else if (m.action === 'setNode') {
+      if (Date.now() < _suppressNodeChangeUntil) return;
+      reason = 'network';
+    }
+    else if (m.action === 'disconnectWeb') reason = 'disconnect';
+    if (!reason) return;
+    if (_onWalletChanged) _onWalletChanged(reason);
+  });
+
   // Expose to global
   window.TronWallet = {
     discoverWallets: discoverWallets,
@@ -153,6 +201,8 @@
     getAddress: getAddress,
     ensureConnected: ensureConnected,
     ensureWalletReady: ensureWalletReady,
-    getCurrentNetwork: getCurrentNetwork
+    getCurrentNetwork: getCurrentNetwork,
+    setOnWalletChanged: setOnWalletChanged,
+    suppressNodeChange: suppressNodeChange
   };
 })();

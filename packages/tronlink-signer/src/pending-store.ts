@@ -73,6 +73,13 @@ export class PendingStore {
     return oldest?.request;
   }
 
+  getAll(): PendingRequest[] {
+    const arr: PendingRequest[] = [];
+    for (const entry of this.pending.values()) arr.push(entry.request);
+    arr.sort((a, b) => a.createdAt - b.createdAt);
+    return arr;
+  }
+
   size(): number {
     return this.pending.size;
   }
@@ -83,5 +90,17 @@ export class PendingStore {
       entry.reject(new Error("Store cleared"));
     }
     this.pending.clear();
+  }
+
+  clearAll(reason: string): void {
+    const count = this.pending.size;
+    for (const [, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error(reason));
+    }
+    this.pending.clear();
+    if (count > 0) {
+      console.error(`[PendingStore] Cleared ${count} pending request(s): ${reason}`);
+    }
   }
 }

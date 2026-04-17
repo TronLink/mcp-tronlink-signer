@@ -56,8 +56,15 @@ const { address, network } = await signer.connectWallet();
 const { signature } = await signer.signMessage("hello world");
 const { txId } = await signer.sendTrx("TXxx...", 1);
 const { signedTransaction } = await signer.signTransaction(tx); // Sign only
-const { txId: broadcastTxId } = await signer.signTransaction(tx, "nile", true); // Sign + broadcast
+const { txId: broadcastTxId, status } = await signer.signTransaction(tx, "nile", true); // Sign + broadcast + confirm
 const { balance } = await signer.getBalance("TXxx..."); // No browser needed
+
+// All signing methods support AbortSignal for cancellation
+const ac = new AbortController();
+const { txId: t } = await signer.sendTrx("TXxx...", 1, undefined, { signal: ac.signal });
+
+// Wait for an existing transaction to confirm
+const result = await signer.waitForTransaction(broadcastTxId, "nile"); // "success" | "pending"
 
 await signer.stop();
 ```

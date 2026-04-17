@@ -26,7 +26,7 @@ export interface ConnectData {}
 
 export interface SendTrxData {
   to: string;
-  amount: number;
+  amount: string | number;
 }
 
 export interface SendTrc20Data {
@@ -53,4 +53,23 @@ export interface AppConfig {
   network: TronNetwork;
   httpPort: number;
   apiKey?: string;
+}
+
+export interface SignerOptions {
+  signal?: AbortSignal;
+  /** Wait for on-chain execution result after broadcast. Default: true. Only applies to broadcasting operations. */
+  confirm?: boolean;
+  /** Max time to wait for confirmation, in ms. Default: 30000. */
+  confirmTimeoutMs?: number;
+  /**
+   * Fires after the transaction has been broadcast to the Tron network
+   * (txId in mempool, not yet confirmed on-chain). Use this to start your
+   * own monitoring in parallel with the SDK's polling. Callback errors are swallowed.
+   */
+  onBroadcasted?: (info: { txId: string; signedTransaction: Record<string, unknown> }) => void;
+}
+
+export interface WaitForTransactionOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
 }

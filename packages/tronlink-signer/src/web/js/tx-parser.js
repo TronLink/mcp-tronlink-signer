@@ -53,11 +53,15 @@
         break;
       case 'TransferAssetContract':
         info.label = 'Transfer TRC10 Asset';
+        info._trc10 = {
+          assetName: fromHexString(v.asset_name),
+          rawAmount: v.amount
+        };
         info.details = [
           { l: 'From', v: fromHexAddress(v.owner_address) },
           { l: 'To', v: fromHexAddress(v.to_address) },
           { l: 'Asset ID', v: fromHexString(v.asset_name) },
-          { l: 'Amount', v: v.amount }
+          { l: 'Amount', v: 'Loading...' }
         ];
         break;
       case 'TriggerSmartContract': {
@@ -134,8 +138,12 @@
           { l: 'Lock', v: v.lock ? 'Yes' : 'No' }
         ];
         if (v.lock && v.lock_period) {
-          var days = Math.round(v.lock_period * 3 / 86400);
-          info.details.push({ l: 'Lock Period', v: days + ' days' });
+          var totalSeconds = v.lock_period * 3;
+          var days = totalSeconds / 86400;
+          var lockDisplay = days >= 1
+            ? days.toFixed(1).replace(/\.0$/, '') + ' days'
+            : (totalSeconds / 3600).toFixed(1).replace(/\.0$/, '') + ' hours';
+          info.details.push({ l: 'Lock Period', v: lockDisplay });
         }
         break;
       }
@@ -239,7 +247,7 @@
       var contract = await tronWeb.contract().at(addr);
       var decimals = 6;
       var symbol = '';
-      try { decimals = await contract.methods.decimals().call(); } catch(e) {}
+      try { decimals = Number(await contract.methods.decimals().call()); } catch(e) {}
       try { symbol = await contract.methods.symbol().call(); } catch(e) {}
 
       var raw = BigInt(trc20.rawAmount);
@@ -282,8 +290,47 @@
     }
   }
 
+  async function fetchTrc10Info(trc10, detailsEl, fullHost) {
+    try {
+      var res = await fetch(fullHost + '/wallet/getassetissuebyid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: trc10.assetName })
+      });
+      var token = await res.json();
+      var precision = token && token.precision ? token.precision : 0;
+      var rawName = (token && token.abbr) || (token && token.name) || '';
+      var name = '';
+      if (rawName) {
+        // API returns hex-encoded strings — decode if valid hex, fallback to raw if printable
+        if (/^[0-9a-fA-F]+$/.test(rawName) && rawName.length % 2 === 0) {
+          var decoded = fromHexString(rawName);
+          if (/^[\x20-\x7E]+$/.test(decoded)) name = decoded;
+        }
+        if (!name && /^[\x20-\x7E]+$/.test(rawName)) name = rawName;
+      }
+      var raw = BigInt(trc10.rawAmount);
+      if (precision > 0) {
+        var divisor = 10n ** BigInt(precision);
+        var whole = raw / divisor;
+        var frac = raw % divisor;
+        var formatted = whole.toString();
+        if (frac > 0n) {
+          var fracStr = frac.toString().padStart(precision, '0').replace(/0+$/, '');
+          formatted += '.' + fracStr;
+        }
+        updateAmountRow(detailsEl, formatted + (name ? ' ' + name : ''));
+      } else {
+        updateAmountRow(detailsEl, raw.toString() + (name ? ' ' + name : ''));
+      }
+    } catch(e) {
+      updateAmountRow(detailsEl, trc10.rawAmount + ' (raw)');
+    }
+  }
+
   window.TxParser = {
     parseTransaction: parseTransaction,
+    fetchTrc10Info: fetchTrc10Info,
     fetchTrc20Info: fetchTrc20Info,
     fetchWithdrawAmount: fetchWithdrawAmount
   };

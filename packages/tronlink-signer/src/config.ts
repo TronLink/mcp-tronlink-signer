@@ -28,9 +28,17 @@ export function loadConfig(): AppConfig {
       `Invalid TRON_NETWORK: ${network}. Must be one of: ${Object.keys(NETWORKS).join(", ")}`
     );
   }
-  const httpPort = process.env.TRON_HTTP_PORT
-    ? parseInt(process.env.TRON_HTTP_PORT, 10)
-    : DEFAULT_HTTP_PORT;
+  const rawPort = process.env.TRON_HTTP_PORT;
+  let httpPort = DEFAULT_HTTP_PORT;
+  if (rawPort !== undefined && rawPort !== "") {
+    const parsed = Number(rawPort);
+    if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
+      throw new Error(
+        `Invalid TRON_HTTP_PORT: ${rawPort}. Must be an integer in range 1-65535.`
+      );
+    }
+    httpPort = parsed;
+  }
   return {
     network,
     httpPort,

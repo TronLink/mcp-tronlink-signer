@@ -10,7 +10,22 @@
         return { address: tronWeb.defaultAddress.base58, network: window.TronWallet.getCurrentNetwork() };
       }
       case 'send_trx': {
-        var tx = await tronWeb.transactionBuilder.sendTrx(data.to, tronWeb.toSun(data.amount));
+        var trxStr = String(data.amount).trim();
+        if (!/^\d+(\.\d+)?$/.test(trxStr)) {
+          throw new Error('Invalid TRX amount: ' + data.amount);
+        }
+        var trxParts = trxStr.split('.');
+        var trxWhole = trxParts[0] || '0';
+        var trxFracInput = trxParts[1] || '';
+        if (trxFracInput.length > 6) {
+          throw new Error('TRX has max 6 decimals, got: ' + data.amount);
+        }
+        var trxFrac = trxFracInput.padEnd(6, '0');
+        var sun = BigInt(trxWhole) * 1000000n + BigInt(trxFrac || '0');
+        if (sun === 0n) {
+          throw new Error('TRX amount is zero: ' + data.amount);
+        }
+        var tx = await tronWeb.transactionBuilder.sendTrx(data.to, sun.toString());
         var signedTx = await tronWeb.trx.sign(tx);
         var broadcast = await tronWeb.trx.sendRawTransaction(signedTx);
         if (broadcast.result === false) {
