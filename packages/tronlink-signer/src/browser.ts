@@ -3,7 +3,7 @@ import open from "open";
 let pageOpened = false;
 let lastHeartbeat = 0;
 
-const HEARTBEAT_TIMEOUT = 6_000; // 2s heartbeat × 3 misses = page closed
+const HEARTBEAT_TIMEOUT = 5_000;
 
 export function recordHeartbeat(): void {
   lastHeartbeat = Date.now();

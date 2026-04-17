@@ -21,6 +21,10 @@
     shasta: 'Shasta Testnet'
   };
 
+  // Heartbeat — detect server disconnect or session change
+  var heartbeatFailCount = 0;
+  var sessionExpired = false;
+
   function markSessionExpired() {
     sessionExpired = true;
     setStatus('Session expired. Please close this tab and try again.', 'error');
@@ -29,12 +33,9 @@
     approveBtn.disabled = true;
     rejectBtn.disabled = true;
   }
-
-  // Heartbeat — detect server disconnect or session change
-  var heartbeatFailCount = 0;
-  var sessionExpired = false;
   setInterval(function() {
     if (sessionExpired) return;
+    if (!sessionId) return;
     fetch('/api/heartbeat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -60,7 +61,7 @@
           markSessionExpired();
         }
       });
-  }, 2000);
+  }, 1000);
 
   // --- UI helpers ---
 
@@ -188,6 +189,7 @@
         for (var i = 0; i < 10; i++) {
           var addr = window.TronWallet.getAddress();
           if (addr) {
+            stopValidityWatch();
             try {
               await completeRequest(currentRequestId, true, { address: addr, network: window.TronWallet.getCurrentNetwork() });
               setStatus('Wallet connected: ' + addr, 'success');
@@ -213,13 +215,17 @@
 
   async function completeRequest(id, success, resultOrError) {
     var body = success
-      ? { success: true, result: resultOrError }
-      : { success: false, error: resultOrError };
+      ? { sessionId: sessionId, success: true, result: resultOrError }
+      : { sessionId: sessionId, success: false, error: resultOrError };
     var res = await fetch('/api/complete/' + id, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (res.status === 410) {
+      markSessionExpired();
+      throw new Error('Session expired.');
+    }
     if (!res.ok) {
       throw new Error('Request expired or no longer available.');
     }
@@ -230,9 +236,8 @@
     currentRequestId = req.id;
     startValidityWatch(req.id);
 
-    renderDetails(req);
-
-    // Wait for wallet extension to inject first
+    // Wait for wallet extension to inject first — tronWeb.address.fromHex
+    // (used by renderDetails to show base58 addresses) needs the provider.
     setStatus('Discovering wallets...', 'waiting');
     try {
       await window.TronWallet.waitForWallet(5000);
@@ -241,9 +246,12 @@
         setStatus('Found wallet: ' + detail.info.name, 'info');
       }
     } catch (e) {
+      renderDetails(req);
       setStatus(e.message, 'error');
       return;
     }
+
+    renderDetails(req);
 
     await tryEnsureWallet();
   }
@@ -256,9 +264,6 @@
     if (!currentRequestId) {
       setStatus('Waiting for request...', 'info');
     }
-
-    var interval = 500;
-    var maxInterval = 5000;
 
     while (true) {
       if (sessionExpired) { polling = false; return; }
@@ -276,11 +281,10 @@
             return;
           }
         }
-        interval = Math.min(interval * 1.5, maxInterval);
       } catch (e) {
-        interval = maxInterval;
+        // network error, ignore
       }
-      await new Promise(function(r) { setTimeout(r, interval); });
+      await new Promise(function(r) { setTimeout(r, 1000); });
     }
   }
 
@@ -298,8 +302,13 @@
   approveBtn.addEventListener('click', async function() {
     disableButtons();
     stopValidityWatch();
-    setStatus('Processing with wallet...', 'waiting');
+    setStatus('Checking request...', 'waiting');
     try {
+      var check = await fetch('/api/pending/' + currentRequestId);
+      if (!check.ok) {
+        throw new Error('Request was cancelled or expired.');
+      }
+      setStatus('Processing with wallet...', 'waiting');
       var result = await window.TronActions.execute(pendingRequest);
       await completeRequest(currentRequestId, true, result);
       setStatus('Approved and completed successfully.', 'success');

@@ -1,9 +1,16 @@
-import express, { type Express, type Request, type Response } from "express";
+import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import type { Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { PendingStore } from "./pending-store.js";
 import { NETWORKS } from "./config.js";
 import { recordHeartbeat } from "./browser.js";
+
+const CSP =
+  "default-src 'self'; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data:; " +
+  "connect-src *; " +
+  "frame-ancestors 'none';";
 
 export class HttpServer {
   private app: Express;
@@ -23,11 +30,52 @@ export class HttpServer {
     this.setupRoutes();
   }
 
+  // Defense against DNS rebinding + cross-origin CSRF: reject any request whose
+  // Host header isn't our loopback binding, and whose Origin/Referer (if present)
+  // doesn't match either. Browsers always send Host, and send Origin on POSTs.
+  private originGuard = (req: Request, res: Response, next: NextFunction): void => {
+    const allowedHosts = new Set([
+      `127.0.0.1:${this.port}`,
+      `localhost:${this.port}`,
+    ]);
+    const host = req.headers.host || "";
+    if (!allowedHosts.has(host)) {
+      res.status(403).json({ error: "Forbidden host" });
+      return;
+    }
+    const originHeader = (req.headers.origin || req.headers.referer || "") as string;
+    if (originHeader) {
+      const ok =
+        originHeader === `http://127.0.0.1:${this.port}` ||
+        originHeader === `http://localhost:${this.port}` ||
+        originHeader.startsWith(`http://127.0.0.1:${this.port}/`) ||
+        originHeader.startsWith(`http://localhost:${this.port}/`);
+      if (!ok) {
+        res.status(403).json({ error: "Forbidden origin" });
+        return;
+      }
+    }
+    next();
+  };
+
+  private requireSession(req: Request, res: Response): boolean {
+    const clientSession = req.body && req.body.sessionId;
+    if (clientSession !== this.sessionId) {
+      res.status(410).json({ error: "Session expired", sessionId: this.sessionId });
+      return false;
+    }
+    return true;
+  }
+
   private setupRoutes(): void {
     this.app.use(express.json());
+    this.app.use(this.originGuard);
 
     this.app.get("/", (_req: Request, res: Response) => {
       res.setHeader("Content-Type", "text/html");
+      res.setHeader("Content-Security-Policy", CSP);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Referrer-Policy", "no-referrer");
       res.send(this.htmlContent);
     });
 
@@ -66,6 +114,7 @@ export class HttpServer {
     });
 
     this.app.post("/api/complete/:id", (req: Request, res: Response) => {
+      if (!this.requireSession(req, res)) return;
       const id = req.params.id as string;
       const { success, result, error } = req.body;
 
@@ -91,11 +140,7 @@ export class HttpServer {
     });
 
     this.app.post("/api/heartbeat", (req: Request, res: Response) => {
-      const clientSession = req.body && req.body.sessionId;
-      if (clientSession && clientSession !== this.sessionId) {
-        res.status(410).json({ error: "Session expired", sessionId: this.sessionId });
-        return;
-      }
+      if (!this.requireSession(req, res)) return;
       recordHeartbeat();
       res.json({ ok: true, sessionId: this.sessionId });
     });
@@ -114,30 +159,31 @@ export class HttpServer {
   }
 
   async start(port: number): Promise<void> {
-    this.port = port;
     return this._tryListen(port);
   }
 
   private _tryListen(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
-      try {
-        this.server = this.app.listen(port, "127.0.0.1", () => {
-          this.port = port;
-          console.error(`[HttpServer] Listening on http://127.0.0.1:${port}`);
-          resolve();
-        });
-        this.server.on("error", (err: NodeJS.ErrnoException) => {
-          if (err.code === "EADDRINUSE") {
-            const nextPort = port + 1;
-            console.error(`[HttpServer] Port ${port} is in use, trying ${nextPort}...`);
-            this._tryListen(nextPort).then(resolve, reject);
-          } else {
-            reject(err);
-          }
-        });
-      } catch (err) {
-        reject(err);
-      }
+      const server = this.app.listen(port, "127.0.0.1");
+      const onError = (err: NodeJS.ErrnoException) => {
+        server.removeAllListeners();
+        server.close();
+        if (err.code === "EADDRINUSE") {
+          const nextPort = port + 1;
+          console.error(`[HttpServer] Port ${port} is in use, trying ${nextPort}...`);
+          this._tryListen(nextPort).then(resolve, reject);
+        } else {
+          reject(err);
+        }
+      };
+      server.once("error", onError);
+      server.once("listening", () => {
+        server.removeListener("error", onError);
+        this.server = server;
+        this.port = port;
+        console.error(`[HttpServer] Listening on http://127.0.0.1:${port}`);
+        resolve();
+      });
     });
   }
 

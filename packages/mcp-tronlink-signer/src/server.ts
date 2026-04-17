@@ -9,11 +9,12 @@ import {
   ConnectWalletSchema,
   GetBalanceSchema,
 } from "./schemas.js";
+import pkg from "../package.json" with { type: "json" };
 
 export function createMcpServer(signer: TronSigner): McpServer {
   const server = new McpServer({
-    name: "mcp-tronlink-signer",
-    version: "0.1.0",
+    name: pkg.name,
+    version: pkg.version,
   });
 
   const SIGN_NOTICE = "⚠️ ACTION REQUIRED: Please switch to your browser and approve/reject this request in the TronLink Signer page.";

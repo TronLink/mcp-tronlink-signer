@@ -7,7 +7,14 @@ const NetworkSchema = z
 
 export const SendTrxSchema = z.object({
   to: z.string().describe("Recipient Tron address (base58)"),
-  amount: z.number().positive().describe("Amount of TRX to send"),
+  amount: z
+    .union([
+      z.number().positive(),
+      z.string().regex(/^\d+(\.\d+)?$/, "Amount must be a non-negative decimal string"),
+    ])
+    .describe(
+      "Amount of TRX to send in human-readable units. Prefer a string (e.g. '1.5') to avoid floating-point precision loss for large amounts; numbers are still accepted for backward compatibility. Max 6 decimal places."
+    ),
   network: NetworkSchema,
 });
 

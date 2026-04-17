@@ -138,8 +138,12 @@
           { l: 'Lock', v: v.lock ? 'Yes' : 'No' }
         ];
         if (v.lock && v.lock_period) {
-          var days = Math.round(v.lock_period * 3 / 86400);
-          info.details.push({ l: 'Lock Period', v: days + ' days' });
+          var totalSeconds = v.lock_period * 3;
+          var days = totalSeconds / 86400;
+          var lockDisplay = days >= 1
+            ? days.toFixed(1).replace(/\.0$/, '') + ' days'
+            : (totalSeconds / 3600).toFixed(1).replace(/\.0$/, '') + ' hours';
+          info.details.push({ l: 'Lock Period', v: lockDisplay });
         }
         break;
       }
@@ -243,7 +247,7 @@
       var contract = await tronWeb.contract().at(addr);
       var decimals = 6;
       var symbol = '';
-      try { decimals = await contract.methods.decimals().call(); } catch(e) {}
+      try { decimals = Number(await contract.methods.decimals().call()); } catch(e) {}
       try { symbol = await contract.methods.symbol().call(); } catch(e) {}
 
       var raw = BigInt(trc20.rawAmount);
@@ -295,7 +299,16 @@
       });
       var token = await res.json();
       var precision = token && token.precision ? token.precision : 0;
-      var name = (token && token.abbr) || (token && token.name) || '';
+      var rawName = (token && token.abbr) || (token && token.name) || '';
+      var name = '';
+      if (rawName) {
+        // API returns hex-encoded strings — decode if valid hex, fallback to raw if printable
+        if (/^[0-9a-fA-F]+$/.test(rawName) && rawName.length % 2 === 0) {
+          var decoded = fromHexString(rawName);
+          if (/^[\x20-\x7E]+$/.test(decoded)) name = decoded;
+        }
+        if (!name && /^[\x20-\x7E]+$/.test(rawName)) name = rawName;
+      }
       var raw = BigInt(trc10.rawAmount);
       if (precision > 0) {
         var divisor = 10n ** BigInt(precision);

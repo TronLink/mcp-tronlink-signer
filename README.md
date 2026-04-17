@@ -59,6 +59,10 @@ const { signedTransaction } = await signer.signTransaction(tx); // Sign only
 const { txId: broadcastTxId } = await signer.signTransaction(tx, "nile", true); // Sign + broadcast
 const { balance } = await signer.getBalance("TXxx..."); // No browser needed
 
+// All signing methods support AbortSignal for cancellation
+const ac = new AbortController();
+const { txId: t } = await signer.sendTrx("TXxx...", 1, undefined, { signal: ac.signal });
+
 await signer.stop();
 ```
 

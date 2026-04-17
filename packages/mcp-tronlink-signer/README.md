@@ -78,6 +78,10 @@ All tools support an optional `network` parameter (`mainnet` / `nile` / `shasta`
 8. TronLink signs the transaction — private keys never leave the wallet
 9. Result is returned to the AI agent — the page stays open for the next operation
 
+## Cancellation
+
+All signing tools support MCP cancellation. If the AI client cancels a pending tool call (e.g., user presses Ctrl+C in Claude Code), the in-flight request is automatically aborted and the browser approval page is not opened for already-cancelled requests.
+
 ## Environment Variables
 
 | Variable | Description | Default |

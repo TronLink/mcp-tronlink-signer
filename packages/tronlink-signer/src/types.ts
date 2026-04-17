@@ -26,7 +26,7 @@ export interface ConnectData {}
 
 export interface SendTrxData {
   to: string;
-  amount: number;
+  amount: string | number;
 }
 
 export interface SendTrc20Data {

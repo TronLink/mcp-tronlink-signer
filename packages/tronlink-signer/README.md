@@ -41,11 +41,11 @@ Stops the server and clears all pending requests.
 
 Returns the current configuration.
 
-### `signer.connectWallet(network?: TronNetwork): Promise<{ address: string; network: string }>`
+### `signer.connectWallet(network?, options?): Promise<{ address: string; network: string }>`
 
 Opens the browser to connect TronLink and retrieve the wallet address and current network. If the wallet is already connected (same browser tab still open), auto-completes without user interaction.
 
-### `signer.sendTrx(to, amount, network?): Promise<{ txId: string }>`
+### `signer.sendTrx(to, amount, network?, options?): Promise<{ txId: string }>`
 
 Sends TRX to a recipient address. Opens a browser approval page for the user to confirm.
 
@@ -54,8 +54,9 @@ Sends TRX to a recipient address. Opens a browser approval page for the user to 
 | `to` | `string` | Recipient Tron address (base58) |
 | `amount` | `number` | Amount of TRX to send |
 | `network` | `TronNetwork` | Optional network override |
+| `options` | `SignerOptions` | Optional — pass `{ signal }` to enable cancellation |
 
-### `signer.sendTrc20(contractAddress, to, amount, decimals?, network?): Promise<{ txId: string }>`
+### `signer.sendTrc20(contractAddress, to, amount, decimals?, network?, options?): Promise<{ txId: string }>`
 
 Sends TRC20 tokens. Opens a browser approval page.
 
@@ -66,12 +67,13 @@ Sends TRC20 tokens. Opens a browser approval page.
 | `amount` | `string` | Amount in human-readable units (e.g., `"1.5"` for 1.5 USDT). Decimals conversion is automatic. |
 | `decimals` | `number` | Token decimals (default: 6) |
 | `network` | `TronNetwork` | Optional network override |
+| `options` | `SignerOptions` | Optional — pass `{ signal }` to enable cancellation |
 
-### `signer.signMessage(message, network?): Promise<{ signature: string }>`
+### `signer.signMessage(message, network?, options?): Promise<{ signature: string }>`
 
 Signs a plain text message.
 
-### `signer.signTypedData(typedData, network?): Promise<{ signature: string }>`
+### `signer.signTypedData(typedData, network?, options?): Promise<{ signature: string }>`
 
 Signs EIP-712 typed data.
 
@@ -86,7 +88,7 @@ const { signature } = await signer.signTypedData({
 });
 ```
 
-### `signer.signTransaction(transaction, network?, broadcast?): Promise<{ signedTransaction: Record<string, unknown>; txId?: string }>`
+### `signer.signTransaction(transaction, network?, broadcast?, options?): Promise<{ signedTransaction: Record<string, unknown>; txId?: string }>`
 
 Signs a raw transaction. When `broadcast` is `true`, the signed transaction is also broadcast on-chain via TronLink and the `txId` is returned.
 
@@ -95,6 +97,7 @@ Signs a raw transaction. When `broadcast` is `true`, the signed transaction is a
 | `transaction` | `Record<string, unknown>` | Raw transaction object to sign |
 | `network` | `TronNetwork` | Optional network override |
 | `broadcast` | `boolean` | Whether to broadcast after signing (default: `false`) |
+| `options` | `SignerOptions` | Optional — pass `{ signal }` to enable cancellation |
 
 ```ts
 // Sign only
@@ -107,6 +110,35 @@ const { signedTransaction, txId } = await signer.signTransaction(tx, "nile", tru
 ### `signer.getBalance(address, network?): Promise<{ balance: string; balanceSun: number }>`
 
 Gets TRX balance for an address. No browser approval needed.
+
+### `signer.onBrowserDisconnect`
+
+Setter for a callback that fires when the approval page is closed or loses connection (heartbeat timeout). Useful for cleanup or re-prompting the user.
+
+```ts
+signer.onBrowserDisconnect = () => {
+  console.log("Browser approval page was closed");
+};
+```
+
+### Cancellation
+
+All signing methods accept an optional `SignerOptions` with an `AbortSignal`. When the signal is aborted, the pending request is rejected and the browser approval page is not opened (if the signal was already aborted before the call).
+
+```ts
+const controller = new AbortController();
+
+// Cancel after 30 seconds
+setTimeout(() => controller.abort(), 30_000);
+
+try {
+  const { txId } = await signer.sendTrx("TXxx...", 1, undefined, {
+    signal: controller.signal,
+  });
+} catch (e) {
+  // e.message === "CANCELLED_BY_CALLER"
+}
+```
 
 ## How It Works
 
@@ -156,6 +188,10 @@ interface NetworkConfig {
   fullHost: string;
   explorerUrl: string;
 }
+
+interface SignerOptions {
+  signal?: AbortSignal;
+}
 ```
 
 ## Exports
@@ -173,6 +209,7 @@ export type {
   PendingRequestType, PendingRequest,
   ConnectData, SendTrxData, SendTrc20Data,
   SignMessageData, SignTypedDataData, SignTransactionData,
+  SignerOptions,
 } from "./types.js";
 ```
 
