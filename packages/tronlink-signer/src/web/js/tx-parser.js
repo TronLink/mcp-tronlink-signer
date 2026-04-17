@@ -53,11 +53,15 @@
         break;
       case 'TransferAssetContract':
         info.label = 'Transfer TRC10 Asset';
+        info._trc10 = {
+          assetName: fromHexString(v.asset_name),
+          rawAmount: v.amount
+        };
         info.details = [
           { l: 'From', v: fromHexAddress(v.owner_address) },
           { l: 'To', v: fromHexAddress(v.to_address) },
           { l: 'Asset ID', v: fromHexString(v.asset_name) },
-          { l: 'Amount', v: v.amount }
+          { l: 'Amount', v: 'Loading...' }
         ];
         break;
       case 'TriggerSmartContract': {
@@ -282,8 +286,38 @@
     }
   }
 
+  async function fetchTrc10Info(trc10, detailsEl, fullHost) {
+    try {
+      var res = await fetch(fullHost + '/wallet/getassetissuebyid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: trc10.assetName })
+      });
+      var token = await res.json();
+      var precision = token && token.precision ? token.precision : 0;
+      var name = (token && token.abbr) || (token && token.name) || '';
+      var raw = BigInt(trc10.rawAmount);
+      if (precision > 0) {
+        var divisor = 10n ** BigInt(precision);
+        var whole = raw / divisor;
+        var frac = raw % divisor;
+        var formatted = whole.toString();
+        if (frac > 0n) {
+          var fracStr = frac.toString().padStart(precision, '0').replace(/0+$/, '');
+          formatted += '.' + fracStr;
+        }
+        updateAmountRow(detailsEl, formatted + (name ? ' ' + name : ''));
+      } else {
+        updateAmountRow(detailsEl, raw.toString() + (name ? ' ' + name : ''));
+      }
+    } catch(e) {
+      updateAmountRow(detailsEl, trc10.rawAmount + ' (raw)');
+    }
+  }
+
   window.TxParser = {
     parseTransaction: parseTransaction,
+    fetchTrc10Info: fetchTrc10Info,
     fetchTrc20Info: fetchTrc20Info,
     fetchWithdrawAmount: fetchWithdrawAmount
   };

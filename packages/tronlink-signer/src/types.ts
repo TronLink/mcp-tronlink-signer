@@ -54,3 +54,7 @@ export interface AppConfig {
   httpPort: number;
   apiKey?: string;
 }
+
+export interface SignerOptions {
+  signal?: AbortSignal;
+}

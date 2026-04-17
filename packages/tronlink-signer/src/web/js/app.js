@@ -60,7 +60,7 @@
           markSessionExpired();
         }
       });
-  }, 3000);
+  }, 2000);
 
   // --- UI helpers ---
 
@@ -85,6 +85,37 @@
   function disableButtons() {
     approveBtn.disabled = true;
     rejectBtn.disabled = true;
+  }
+
+  // --- Validity watcher: detect server-side cancellation ---
+  var validityTimer = null;
+
+  function startValidityWatch(requestId) {
+    stopValidityWatch();
+    validityTimer = setInterval(async function() {
+      if (sessionExpired) { stopValidityWatch(); return; }
+      try {
+        var res = await fetch('/api/pending/' + requestId);
+        if (!res.ok) {
+          stopValidityWatch();
+          setStatus('Request was cancelled.', 'info');
+          buttonGroup.style.display = 'none';
+          retryGroup.style.display = 'none';
+          detailsEl.innerHTML = '';
+          typeBadgeEl.style.display = 'none';
+          networkBadgeEl.style.display = 'none';
+          currentRequestId = null;
+          pendingRequest = null;
+          startPollingAfterDone();
+        }
+      } catch (e) {
+        // network error, ignore — heartbeat will handle disconnect
+      }
+    }, 1500);
+  }
+
+  function stopValidityWatch() {
+    if (validityTimer) { clearInterval(validityTimer); validityTimer = null; }
   }
 
   // --- Render request details ---
@@ -127,6 +158,9 @@
         if (parsed) {
           addDetail('Type', parsed.label);
           parsed.details.forEach(function(d) { addDetail(d.l, d.v); });
+          if (parsed._trc10 && req.networkConfig) {
+            window.TxParser.fetchTrc10Info(parsed._trc10, detailsEl, req.networkConfig.fullHost);
+          }
           if (parsed._trc20) {
             window.TxParser.fetchTrc20Info(parsed._trc20, detailsEl);
           }
@@ -194,6 +228,7 @@
   async function handleRequest(req) {
     pendingRequest = req;
     currentRequestId = req.id;
+    startValidityWatch(req.id);
 
     renderDetails(req);
 
@@ -262,6 +297,7 @@
 
   approveBtn.addEventListener('click', async function() {
     disableButtons();
+    stopValidityWatch();
     setStatus('Processing with wallet...', 'waiting');
     try {
       var result = await window.TronActions.execute(pendingRequest);
@@ -281,6 +317,7 @@
 
   rejectBtn.addEventListener('click', async function() {
     disableButtons();
+    stopValidityWatch();
     try {
       await completeRequest(currentRequestId, false, 'USER_REJECTED');
       setStatus('Rejected.', 'error');

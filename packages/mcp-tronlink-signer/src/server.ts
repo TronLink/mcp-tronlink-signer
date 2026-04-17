@@ -39,10 +39,10 @@ export function createMcpServer(signer: TronSigner): McpServer {
     "connect_wallet",
     `Connect to TronLink wallet. ${SIGN_NOTICE}`,
     ConnectWalletSchema.shape,
-    async ({ network }) => {
+    async ({ network }, extra) => {
       console.error(`\n🔔 [mcp-tronlink-signer] Waiting for wallet connection approval in browser...\n`);
       try {
-        const result = await signer.connectWallet(network);
+        const result = await signer.connectWallet(network, { signal: extra.signal });
         return signingResult(result);
       } catch (e) {
         return signingError(e);
@@ -54,10 +54,10 @@ export function createMcpServer(signer: TronSigner): McpServer {
     "send_trx",
     `Send TRX to an address. ${SIGN_NOTICE}`,
     SendTrxSchema.shape,
-    async ({ to, amount, network }) => {
+    async ({ to, amount, network }, extra) => {
       console.error(`\n🔔 [mcp-tronlink-signer] Waiting for transaction approval in browser... (send ${amount} TRX to ${to})\n`);
       try {
-        const result = await signer.sendTrx(to, amount, network);
+        const result = await signer.sendTrx(to, amount, network, { signal: extra.signal });
         return signingResult(result);
       } catch (e) {
         return signingError(e);
@@ -69,10 +69,10 @@ export function createMcpServer(signer: TronSigner): McpServer {
     "send_trc20",
     `Send TRC20 tokens. ${SIGN_NOTICE}`,
     SendTrc20Schema.shape,
-    async ({ contractAddress, to, amount, decimals, network }) => {
+    async ({ contractAddress, to, amount, decimals, network }, extra) => {
       console.error(`\n🔔 [mcp-tronlink-signer] Waiting for TRC20 transfer approval in browser... (${amount} to ${to})\n`);
       try {
-        const result = await signer.sendTrc20(contractAddress, to, amount, decimals, network);
+        const result = await signer.sendTrc20(contractAddress, to, amount, decimals, network, { signal: extra.signal });
         return signingResult(result);
       } catch (e) {
         return signingError(e);
@@ -84,10 +84,10 @@ export function createMcpServer(signer: TronSigner): McpServer {
     "sign_message",
     `Sign a message with the wallet. ${SIGN_NOTICE}`,
     SignMessageSchema.shape,
-    async ({ message, network }) => {
+    async ({ message, network }, extra) => {
       console.error(`\n🔔 [mcp-tronlink-signer] Waiting for message signing approval in browser...\n`);
       try {
-        const result = await signer.signMessage(message, network);
+        const result = await signer.signMessage(message, network, { signal: extra.signal });
         return signingResult(result);
       } catch (e) {
         return signingError(e);
@@ -99,10 +99,10 @@ export function createMcpServer(signer: TronSigner): McpServer {
     "sign_typed_data",
     `Sign EIP-712 typed data. ${SIGN_NOTICE}`,
     SignTypedDataSchema.shape,
-    async ({ typedData, network }) => {
+    async ({ typedData, network }, extra) => {
       console.error(`\n🔔 [mcp-tronlink-signer] Waiting for typed data signing approval in browser...\n`);
       try {
-        const result = await signer.signTypedData(typedData, network);
+        const result = await signer.signTypedData(typedData, network, { signal: extra.signal });
         return signingResult(result);
       } catch (e) {
         return signingError(e);
@@ -114,10 +114,10 @@ export function createMcpServer(signer: TronSigner): McpServer {
     "sign_transaction",
     `Sign a raw transaction. ${SIGN_NOTICE}`,
     SignTransactionSchema.shape,
-    async ({ transaction, broadcast, network }) => {
+    async ({ transaction, broadcast, network }, extra) => {
       console.error(`\n🔔 [mcp-tronlink-signer] Waiting for transaction signing approval in browser...${broadcast ? ' (will broadcast)' : ''}\n`);
       try {
-        const result = await signer.signTransaction(transaction, network, broadcast);
+        const result = await signer.signTransaction(transaction, network, broadcast, { signal: extra.signal });
         return signingResult(result);
       } catch (e) {
         return signingError(e);

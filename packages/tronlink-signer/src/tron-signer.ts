@@ -2,9 +2,9 @@
 import { TronWeb } from "tronweb";
 import { PendingStore } from "./pending-store.js";
 import { HttpServer } from "./http-server.js";
-import { openApprovalPage } from "./browser.js";
+import { openApprovalPage, getLastHeartbeat } from "./browser.js";
 import { NETWORKS, loadConfig } from "./config.js";
-import type { AppConfig, TronNetwork, SendTrxData, SendTrc20Data, SignMessageData, SignTypedDataData, SignTransactionData } from "./types.js";
+import type { AppConfig, TronNetwork, SendTrxData, SendTrc20Data, SignMessageData, SignTypedDataData, SignTransactionData, SignerOptions } from "./types.js";
 // @ts-ignore - HTML imported as text via tsup loader
 import htmlContent from "./web/index.html";
 // @ts-ignore - JS imported as text via tsup loader
@@ -22,6 +22,12 @@ export class TronSigner {
   private httpServer: HttpServer;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private tronWeb: any;
+  private browserWatchTimer: ReturnType<typeof setInterval> | null = null;
+  private _onBrowserDisconnect: (() => void) | null = null;
+
+  set onBrowserDisconnect(cb: (() => void) | null) {
+    this._onBrowserDisconnect = cb;
+  }
 
   constructor() {
     this.config = loadConfig();
@@ -56,6 +62,18 @@ export class TronSigner {
     process.on("SIGINT", cleanup);
     process.on("SIGTERM", cleanup);
     process.on("beforeExit", cleanup);
+
+    // Watch for browser disconnect (alive → not-alive transition)
+    const DISCONNECT_TIMEOUT = 6_000;
+    let wasAlive = false;
+    this.browserWatchTimer = setInterval(() => {
+      const hb = getLastHeartbeat();
+      const alive = hb > 0 && Date.now() - hb < DISCONNECT_TIMEOUT;
+      if (wasAlive && !alive && this._onBrowserDisconnect) {
+        this._onBrowserDisconnect();
+      }
+      wasAlive = alive;
+    }, 2000);
   }
 
   private getPort(): number {
@@ -63,6 +81,10 @@ export class TronSigner {
   }
 
   async stop(): Promise<void> {
+    if (this.browserWatchTimer) {
+      clearInterval(this.browserWatchTimer);
+      this.browserWatchTimer = null;
+    }
     this.pendingStore.clear();
     await this.httpServer.stop();
   }
@@ -76,18 +98,31 @@ export class TronSigner {
     return network || this.config.network;
   }
 
-  async connectWallet(network?: TronNetwork): Promise<{ address: string; network: string }> {
+  private attachAbortSignal(id: string, promise: Promise<unknown>, signal?: AbortSignal): void {
+    if (!signal) return;
+    if (signal.aborted) {
+      this.pendingStore.reject(id, "CANCELLED_BY_CALLER");
+      return;
+    }
+    const onAbort = () => this.pendingStore.reject(id, "CANCELLED_BY_CALLER");
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.finally(() => signal.removeEventListener("abort", onAbort));
+  }
+
+  async connectWallet(network?: TronNetwork, options?: SignerOptions): Promise<{ address: string; network: string }> {
     const net = this.resolveNetwork(network);
     const { id, promise } = this.pendingStore.create("connect", {}, net);
+    this.attachAbortSignal(id, promise, options?.signal);
     await openApprovalPage(this.getPort(), id);
     const result = (await promise) as { address: string; network: string };
     return result;
   }
 
-  async sendTrx(to: string, amount: number, network?: TronNetwork): Promise<{ txId: string }> {
+  async sendTrx(to: string, amount: number, network?: TronNetwork, options?: SignerOptions): Promise<{ txId: string }> {
     const net = this.resolveNetwork(network);
     const data: SendTrxData = { to, amount };
     const { id, promise } = this.pendingStore.create("send_trx", data, net);
+    this.attachAbortSignal(id, promise, options?.signal);
     await openApprovalPage(this.getPort(), id);
     const result = (await promise) as { txId: string };
     return result;
@@ -98,7 +133,8 @@ export class TronSigner {
     to: string,
     amount: string,
     decimals?: number,
-    network?: TronNetwork
+    network?: TronNetwork,
+    options?: SignerOptions
   ): Promise<{ txId: string }> {
     const net = this.resolveNetwork(network);
     const data: SendTrc20Data = {
@@ -108,15 +144,17 @@ export class TronSigner {
       decimals: decimals ?? 6,
     };
     const { id, promise } = this.pendingStore.create("send_trc20", data, net);
+    this.attachAbortSignal(id, promise, options?.signal);
     await openApprovalPage(this.getPort(), id);
     const result = (await promise) as { txId: string };
     return result;
   }
 
-  async signMessage(message: string, network?: TronNetwork): Promise<{ signature: string }> {
+  async signMessage(message: string, network?: TronNetwork, options?: SignerOptions): Promise<{ signature: string }> {
     const net = this.resolveNetwork(network);
     const data: SignMessageData = { message };
     const { id, promise } = this.pendingStore.create("sign_message", data, net);
+    this.attachAbortSignal(id, promise, options?.signal);
     await openApprovalPage(this.getPort(), id);
     const result = (await promise) as { signature: string };
     return result;
@@ -124,11 +162,13 @@ export class TronSigner {
 
   async signTypedData(
     typedData: Record<string, unknown>,
-    network?: TronNetwork
+    network?: TronNetwork,
+    options?: SignerOptions
   ): Promise<{ signature: string }> {
     const net = this.resolveNetwork(network);
     const data: SignTypedDataData = { typedData };
     const { id, promise } = this.pendingStore.create("sign_typed_data", data, net);
+    this.attachAbortSignal(id, promise, options?.signal);
     await openApprovalPage(this.getPort(), id);
     const result = (await promise) as { signature: string };
     return result;
@@ -137,11 +177,13 @@ export class TronSigner {
   async signTransaction(
     transaction: Record<string, unknown>,
     network?: TronNetwork,
-    broadcast?: boolean
+    broadcast?: boolean,
+    options?: SignerOptions
   ): Promise<{ signedTransaction: Record<string, unknown>; txId?: string }> {
     const net = this.resolveNetwork(network);
     const data: SignTransactionData = { transaction, broadcast: broadcast ?? false };
     const { id, promise } = this.pendingStore.create("sign_transaction", data, net);
+    this.attachAbortSignal(id, promise, options?.signal);
     await openApprovalPage(this.getPort(), id);
     const result = (await promise) as { signedTransaction: Record<string, unknown>; txId?: string };
     return result;
