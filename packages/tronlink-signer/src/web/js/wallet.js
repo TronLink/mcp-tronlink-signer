@@ -177,6 +177,12 @@
   }
 
   window.addEventListener('message', function(e) {
+    // TronLink's content script posts wallet events via window.postMessage, so
+    // the legitimate source is always our own window. Any cross-window sender
+    // (attacker tab holding window.opener, a rogue extension targeting this
+    // tab, etc.) must be ignored — without this check, a spoofed message would
+    // trigger pendingStore.clearAll and cancel whatever we're about to sign.
+    if (e.source !== window) return;
     if (!e.data || !e.data.isTronLink || !e.data.message) return;
     var m = e.data.message;
     var reason = null;

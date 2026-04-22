@@ -15,8 +15,20 @@
   var pendingRequest = null;  // currently active request object
   var currentRequestId = null;
   var polling = false;
-  var sessionId = null;
+  // sessionId is injected into the HTML by the server (per-pageload). It never
+  // travels in a response body — any local process that could read it over HTTP
+  // would be able to forge approvals.
+  var sessionMeta = document.querySelector('meta[name="session-id"]');
+  var sessionId = sessionMeta ? sessionMeta.getAttribute('content') : null;
   var lastResultAt = 0;       // suppress idle status overwrite right after approve/reject
+
+  function sessionHeaders(extra) {
+    var h = { 'x-session-id': sessionId || '' };
+    if (extra) {
+      for (var k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) h[k] = extra[k];
+    }
+    return h;
+  }
 
   var NETWORK_NAMES = {
     mainnet: 'Mainnet',
@@ -42,8 +54,8 @@
     if (!sessionId) return;
     fetch('/api/heartbeat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: sessionId })
+      headers: sessionHeaders({ 'Content-Type': 'application/json' }),
+      body: '{}'
     })
       .then(function(res) {
         if (res.status === 410) {
@@ -72,9 +84,10 @@
     return d.innerHTML;
   }
 
-  function addDetail(label, value) {
+  function addDetail(label, value, rowKey) {
     var row = document.createElement('div');
     row.className = 'detail-row';
+    if (rowKey) row.setAttribute('data-row-key', rowKey);
     row.innerHTML = '<span class="label">' + label + '</span><span class="value">' + escapeHtml(String(value)) + '</span>';
     detailsEl.appendChild(row);
   }
@@ -231,7 +244,7 @@
         var parsed = window.TxParser.parseTransaction(data.transaction);
         if (parsed) {
           addDetail('Type', parsed.label);
-          parsed.details.forEach(function(d) { addDetail(d.l, d.v); });
+          parsed.details.forEach(function(d) { addDetail(d.l, d.v, d.k); });
         } else {
           addDetail('Transaction', JSON.stringify(data.transaction, null, 2));
         }
@@ -257,6 +270,16 @@
     }
     if (parsed._withdrawOwner) {
       window.TxParser.fetchWithdrawAmount(parsed._withdrawOwner, detailsEl);
+    }
+    if (parsed._contractCall) {
+      var cc = parsed._contractCall;
+      if (cc.resolved) {
+        if (cc.tokenAmounts && cc.tokenAmounts.length) {
+          window.TxParser.fetchTrc20AmountForCall(cc, detailsEl);
+        }
+      } else {
+        window.TxParser.fetchContractCallAbi(cc, detailsEl);
+      }
     }
   }
 
@@ -301,11 +324,11 @@
 
   async function completeRequest(id, success, resultOrError) {
     var body = success
-      ? { sessionId: sessionId, success: true, result: resultOrError }
-      : { sessionId: sessionId, success: false, error: resultOrError };
+      ? { success: true, result: resultOrError }
+      : { success: false, error: resultOrError };
     var res = await fetch('/api/complete/' + id, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: sessionHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
     });
     if (res.status === 410) {
@@ -367,8 +390,10 @@
     if (polling || sessionExpired) return;
     polling = true;
     try {
-      var res = await fetch('/api/pending');
-      if (res.ok) {
+      var res = await fetch('/api/pending', { headers: sessionHeaders() });
+      if (res.status === 410) {
+        markSessionExpired();
+      } else if (res.ok) {
         var data = await res.json();
         syncPendingList(data.requests || []);
       }
@@ -402,9 +427,8 @@
           try {
             await fetch('/api/broadcasted/' + id, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: sessionHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({
-                sessionId: sessionId,
                 txId: info.txId,
                 signedTransaction: info.signedTransaction,
               }),
@@ -450,8 +474,8 @@
     try {
       await fetch('/api/wallet-changed', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: sessionId, reason: reason }),
+        headers: sessionHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ reason: reason }),
       });
     } catch (_) { /* server will catch up on next poll */ }
     pendingRequests = {};
@@ -471,15 +495,11 @@
 
   // --- Init ---
   window.TronWallet.discoverWallets();
-  fetch('/api/session').then(function(res) {
-    return res.json();
-  }).then(function(data) {
-    sessionId = data.sessionId;
+  if (!sessionId) {
+    markSessionExpired();
+  } else {
     setStatus('Waiting for request...', 'info');
     setInterval(pollPending, 1000);
     pollPending();
-  }).catch(function() {
-    setInterval(pollPending, 1000);
-    pollPending();
-  });
+  }
 })();

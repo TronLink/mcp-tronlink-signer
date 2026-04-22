@@ -33,8 +33,11 @@ export class HttpServer {
   }
 
   // Defense against DNS rebinding + cross-origin CSRF: reject any request whose
-  // Host header isn't our loopback binding, and whose Origin/Referer (if present)
-  // doesn't match either. Browsers always send Host, and send Origin on POSTs.
+  // Host header isn't our loopback binding. For state-changing methods (POST/
+  // PUT/DELETE/PATCH) we also require Origin/Referer to be present AND match —
+  // browsers always send one of those on cross-origin writes, so a missing
+  // header means the caller isn't a browser in good standing (e.g. curl from
+  // another local process trying to forge a request).
   private originGuard = (req: Request, res: Response, next: NextFunction): void => {
     const allowedHosts = new Set([
       `127.0.0.1:${this.port}`,
@@ -46,6 +49,11 @@ export class HttpServer {
       return;
     }
     const originHeader = (req.headers.origin || req.headers.referer || "") as string;
+    const isWrite = req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS";
+    if (isWrite && !originHeader) {
+      res.status(403).json({ error: "Origin required" });
+      return;
+    }
     if (originHeader) {
       const ok =
         originHeader === `http://127.0.0.1:${this.port}` ||
@@ -60,10 +68,14 @@ export class HttpServer {
     next();
   };
 
+  // The sessionId travels in the x-session-id header on every sensitive
+  // request. It is injected into the HTML page server-side (template
+  // substitution) and is never exposed via a GET endpoint — otherwise any
+  // local process could read it and forge approvals.
   private requireSession(req: Request, res: Response): boolean {
-    const clientSession = req.body && req.body.sessionId;
+    const clientSession = req.headers["x-session-id"];
     if (clientSession !== this.sessionId) {
-      res.status(410).json({ error: "Session expired", sessionId: this.sessionId });
+      res.status(410).json({ error: "Session expired" });
       return false;
     }
     return true;
@@ -78,7 +90,9 @@ export class HttpServer {
       res.setHeader("Content-Security-Policy", CSP);
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Referrer-Policy", "no-referrer");
-      res.send(this.htmlContent);
+      // Inject sessionId into the HTML so only this page (same origin, same
+      // pageload) can read it. sessionId is a randomUUID — no escaping needed.
+      res.send(this.htmlContent.replaceAll("{{SESSION_ID}}", this.sessionId));
     });
 
     this.app.get("/js/:name", (req: Request, res: Response) => {
@@ -91,14 +105,16 @@ export class HttpServer {
       res.send(content);
     });
 
-    this.app.get("/api/pending", (_req: Request, res: Response) => {
+    this.app.get("/api/pending", (req: Request, res: Response) => {
+      if (!this.requireSession(req, res)) return;
       const all = this.pendingStore.getAll();
       res.json({
         requests: all.map((r) => ({ ...r, networkConfig: NETWORKS[r.network] })),
       });
     });
 
-    this.app.get("/api/pending/next", (_req: Request, res: Response) => {
+    this.app.get("/api/pending/next", (req: Request, res: Response) => {
+      if (!this.requireSession(req, res)) return;
       const next = this.pendingStore.getNext();
       if (!next) {
         res.status(404).json({ error: "No pending request" });
@@ -111,6 +127,7 @@ export class HttpServer {
     });
 
     this.app.get("/api/pending/:id", (req: Request, res: Response) => {
+      if (!this.requireSession(req, res)) return;
       const request = this.pendingStore.get(req.params.id as string);
       if (!request) {
         res.status(404).json({ error: "Request not found or expired" });
@@ -144,14 +161,10 @@ export class HttpServer {
       }
     });
 
-    this.app.get("/api/session", (_req: Request, res: Response) => {
-      res.json({ sessionId: this.sessionId });
-    });
-
     this.app.post("/api/heartbeat", (req: Request, res: Response) => {
       if (!this.requireSession(req, res)) return;
       recordHeartbeat();
-      res.json({ ok: true, sessionId: this.sessionId });
+      res.json({ ok: true });
     });
 
     this.app.post("/api/broadcasted/:id", (req: Request, res: Response) => {
@@ -181,7 +194,8 @@ export class HttpServer {
       res.json({ status: "ok" });
     });
 
-    this.app.get("/api/debug", (_req: Request, res: Response) => {
+    this.app.get("/api/debug", (req: Request, res: Response) => {
+      if (!this.requireSession(req, res)) return;
       res.json({ pendingCount: this.pendingStore.size() });
     });
   }
@@ -221,11 +235,18 @@ export class HttpServer {
 
   async stop(): Promise<void> {
     return new Promise((resolve) => {
-      if (this.server) {
-        this.server.close(() => resolve());
-      } else {
+      if (!this.server) {
         resolve();
+        return;
       }
+      // The signer page holds HTTP keep-alive sockets (1s heartbeat + 1s poll).
+      // server.close() only stops accepting new connections — existing idle
+      // sockets keep the loop alive until TCP keep-alive times out, so the
+      // SIGINT handler never reaches process.exit() and the host escalates
+      // to SIGTERM. Force them closed so close() can settle.
+      this.server.closeIdleConnections?.();
+      this.server.closeAllConnections?.();
+      this.server.close(() => resolve());
     });
   }
 }
