@@ -2,7 +2,7 @@
 import { TronWeb } from "tronweb";
 import { PendingStore } from "./pending-store.js";
 import { HttpServer } from "./http-server.js";
-import { openApprovalPage, getLastHeartbeat } from "./browser.js";
+import { openApprovalPage, getLastHeartbeat, getLastPageOpenAt } from "./browser.js";
 import { NETWORKS, loadConfig } from "./config.js";
 import type { AppConfig, TronNetwork, SendTrxData, SendTrc20Data, SignMessageData, SignTypedDataData, SignTransactionData, SignerOptions, WaitForTransactionOptions, BroadcastResult, BroadcastStatus } from "./types.js";
 // @ts-ignore - HTML imported as text via tsup loader
@@ -100,12 +100,24 @@ export class TronSigner {
     await this.httpServer.start(this.config.httpPort);
     console.error(`HTTP server started on http://127.0.0.1:${this.httpServer.getPort()}`);
 
-    // Emit onBrowserDisconnect on alive→not-alive transition.
+    // Emit onBrowserDisconnect on alive→not-alive transition. Cold browser
+    // startup (Chrome launching, TronLink service worker waking) can easily
+    // take >5s on slower machines, which would falsely flip the watcher to
+    // "disconnected" before the first real heartbeat ever arrives. Treat the
+    // process startup window AND each fresh openApprovalPage as "alive" so
+    // those gaps don't trigger a phantom disconnect.
     const DISCONNECT_TIMEOUT = 5_000;
+    const STARTUP_GRACE_MS = 30_000;
+    const PAGE_OPEN_GRACE_MS = 15_000;
+    const startedAt = Date.now();
     let wasAlive = false;
     this.browserWatchTimer = setInterval(() => {
       const hb = getLastHeartbeat();
-      const alive = hb > 0 && Date.now() - hb < DISCONNECT_TIMEOUT;
+      const realAlive = hb > 0 && Date.now() - hb < DISCONNECT_TIMEOUT;
+      const inStartGrace = Date.now() - startedAt < STARTUP_GRACE_MS;
+      const lastOpen = getLastPageOpenAt();
+      const inOpenGrace = lastOpen > 0 && Date.now() - lastOpen < PAGE_OPEN_GRACE_MS;
+      const alive = realAlive || inStartGrace || inOpenGrace;
       if (wasAlive && !alive) {
         this.connectedWallet = null;
         if (this._onBrowserDisconnect) this._onBrowserDisconnect();

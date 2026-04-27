@@ -52,17 +52,41 @@
     tabBarEl.innerHTML = '';
   }
 
-  // Either 410 (sessionId mismatch — SDK restarted with new UUID) or repeated
-  // heartbeat failures (server unreachable for ~3s — daemon may be mid-restart)
-  // route here. We try one reload to fetch fresh HTML / re-attach to a new
-  // process. Throttled by a timestamp in sessionStorage so we never reload
-  // faster than once every RELOAD_COOLDOWN_MS — a burst of failures inside
-  // the cooldown means the previous reload didn't help, so we go terminal
-  // instead of thrashing. A daemon restart 10s+ after the last reload still
-  // gets a fresh chance because the timestamp ages out naturally; no need to
-  // hand-reset a counter.
-  function attemptReloadOrExpire() {
+  // 410 (sessionId mismatch — daemon restarted) or repeated heartbeat failures
+  // route here. Try in-place refresh first: fetch '/' with cache:'no-store',
+  // parse the new sessionId out of the meta tag, swap it in memory. This keeps
+  // the current tab (preserving the single-window-per-instance invariant and
+  // the in-progress UI: tabBar, pending request, wallet popup state).
+  //
+  // Only fall back to location.reload() when the in-place fetch fails (network
+  // truly down). Reload is throttled by RELOAD_COOLDOWN_MS in sessionStorage —
+  // two reloads within the window means the previous one didn't help, so we go
+  // terminal instead of thrashing.
+  async function attemptReloadOrExpire() {
     if (sessionExpired) return;
+
+    try {
+      var res = await fetch('/?_=' + Date.now(), {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' }
+      });
+      if (res.ok) {
+        var html = await res.text();
+        var m = html.match(/<meta name="session-id" content="([^"]+)">/);
+        var newId = m && m[1];
+        if (newId && newId !== '{{SESSION_ID}}') {
+          if (newId !== sessionId) {
+            sessionId = newId;
+            var meta = document.querySelector('meta[name="session-id"]');
+            if (meta) meta.setAttribute('content', newId);
+          }
+          heartbeatFailCount = 0;
+          try { sessionStorage.removeItem(RELOAD_KEY); } catch (_) {}
+          return;
+        }
+      }
+    } catch (_) { /* fall through to reload */ }
+
     var now = Date.now();
     var lastReload = 0;
     try { lastReload = parseInt(sessionStorage.getItem(RELOAD_KEY) || '0', 10) || 0; } catch (_) {}
@@ -74,7 +98,7 @@
     location.reload();
   }
 
-  setInterval(function() {
+  function pulseHeartbeat() {
     if (sessionExpired) return;
     if (!sessionId) return;
     fetch('/api/heartbeat', {
@@ -97,7 +121,12 @@
       .finally(function() {
         if (heartbeatFailCount >= 3 && !sessionExpired) attemptReloadOrExpire();
       });
-  }, 1000);
+  }
+  // Fire immediately so the first heartbeat doesn't have to wait a full second
+  // — closes the gap with the SDK's watchTimer DISCONNECT_TIMEOUT during cold
+  // browser startup.
+  pulseHeartbeat();
+  setInterval(pulseHeartbeat, 1000);
 
   // --- UI helpers ---
 

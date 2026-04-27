@@ -2,6 +2,7 @@ import open from "open";
 
 let pageOpened = false;
 let lastHeartbeat = 0;
+let lastPageOpenAt = 0;
 
 const HEARTBEAT_TIMEOUT = 5_000;
 
@@ -11,6 +12,10 @@ export function recordHeartbeat(): void {
 
 export function getLastHeartbeat(): number {
   return lastHeartbeat;
+}
+
+export function getLastPageOpenAt(): number {
+  return lastPageOpenAt;
 }
 
 export function isPageAlive(): boolean {
@@ -34,5 +39,6 @@ export async function openApprovalPage(
   }
   pageOpened = true;
   lastHeartbeat = Date.now();
+  lastPageOpenAt = Date.now();
   await open(url);
 }

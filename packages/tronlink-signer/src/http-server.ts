@@ -93,9 +93,11 @@ export class HttpServer {
       // HTML has the per-process sessionId baked in via template substitution
       // and JS is bundled into dist as an inline string, so any cached copy
       // becomes stale on the next SDK build or process restart. Force fresh
-      // every time — also makes location.reload() in the page reliable on
-      // browsers that otherwise serve cached responses.
-      res.setHeader("Cache-Control", "no-store");
+      // every time. The extra Pragma + must-revalidate are belt-and-suspenders
+      // for older Chrome versions that have been observed serving disk-cached
+      // HTML or BFCache copies despite no-store alone.
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0, private");
+      res.setHeader("Pragma", "no-cache");
       res.send(this.htmlContent.replaceAll("{{SESSION_ID}}", this.sessionId));
     });
 
@@ -106,7 +108,8 @@ export class HttpServer {
         return;
       }
       res.setHeader("Content-Type", "application/javascript");
-      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0, private");
+      res.setHeader("Pragma", "no-cache");
       res.send(content);
     });
 
@@ -224,6 +227,13 @@ export class HttpServer {
         server.removeAllListeners();
         server.close();
         if (err.code === "EADDRINUSE") {
+          // Opt-in strict mode: caller (CLI/MCP) decides whether silent +1
+          // fallback is desired. Strict mode prevents the "two SDK processes
+          // on adjacent ports, user clicks the wrong tab" UX trap.
+          if (process.env.TRON_HTTP_STRICT_PORT === "1") {
+            reject(err);
+            return;
+          }
           const nextPort = port + 1;
           console.error(`[HttpServer] Port ${port} is in use, trying ${nextPort}...`);
           this._tryListen(nextPort).then(resolve, reject);
