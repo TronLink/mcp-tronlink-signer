@@ -90,8 +90,12 @@ export class HttpServer {
       res.setHeader("Content-Security-Policy", CSP);
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Referrer-Policy", "no-referrer");
-      // Inject sessionId into the HTML so only this page (same origin, same
-      // pageload) can read it. sessionId is a randomUUID — no escaping needed.
+      // HTML has the per-process sessionId baked in via template substitution
+      // and JS is bundled into dist as an inline string, so any cached copy
+      // becomes stale on the next SDK build or process restart. Force fresh
+      // every time — also makes location.reload() in the page reliable on
+      // browsers that otherwise serve cached responses.
+      res.setHeader("Cache-Control", "no-store");
       res.send(this.htmlContent.replaceAll("{{SESSION_ID}}", this.sessionId));
     });
 
@@ -102,6 +106,7 @@ export class HttpServer {
         return;
       }
       res.setHeader("Content-Type", "application/javascript");
+      res.setHeader("Cache-Control", "no-store");
       res.send(content);
     });
 
