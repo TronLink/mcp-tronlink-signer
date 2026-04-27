@@ -204,6 +204,10 @@ export class HttpServer {
     return this.port;
   }
 
+  getSessionId(): string {
+    return this.sessionId;
+  }
+
   async start(port: number): Promise<void> {
     return this._tryListen(port);
   }

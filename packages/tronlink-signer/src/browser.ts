@@ -21,11 +21,15 @@ export function isPageAlive(): boolean {
 
 export async function openApprovalPage(
   port: number,
+  sessionId: string,
   _requestId: string
 ): Promise<void> {
-  const url = `http://127.0.0.1:${port}/`;
+  // Per-process token in the query so `open(url)` differs across process
+  // restarts: same process always opens/focuses the same tab; a new process
+  // (new sessionId) opens a fresh tab instead of focusing a dead old one.
+  // The token is informational — auth still goes via the x-session-id header.
+  const url = `http://127.0.0.1:${port}/?s=${encodeURIComponent(sessionId)}`;
   if (isPageAlive()) {
-    // Page is still open, it will pick up the new request via polling
     return;
   }
   pageOpened = true;

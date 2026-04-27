@@ -39,6 +39,8 @@
   // Heartbeat — detect server disconnect or session change
   var heartbeatFailCount = 0;
   var sessionExpired = false;
+  var RELOAD_KEY = 'tronlink-signer:lastReloadAt';
+  var RELOAD_COOLDOWN_MS = 10_000;
 
   function markSessionExpired() {
     sessionExpired = true;
@@ -49,6 +51,29 @@
     rejectBtn.disabled = true;
     tabBarEl.innerHTML = '';
   }
+
+  // Either 410 (sessionId mismatch — SDK restarted with new UUID) or repeated
+  // heartbeat failures (server unreachable for ~3s — daemon may be mid-restart)
+  // route here. We try one reload to fetch fresh HTML / re-attach to a new
+  // process. Throttled by a timestamp in sessionStorage so we never reload
+  // faster than once every RELOAD_COOLDOWN_MS — a burst of failures inside
+  // the cooldown means the previous reload didn't help, so we go terminal
+  // instead of thrashing. A daemon restart 10s+ after the last reload still
+  // gets a fresh chance because the timestamp ages out naturally; no need to
+  // hand-reset a counter.
+  function attemptReloadOrExpire() {
+    if (sessionExpired) return;
+    var now = Date.now();
+    var lastReload = 0;
+    try { lastReload = parseInt(sessionStorage.getItem(RELOAD_KEY) || '0', 10) || 0; } catch (_) {}
+    if (lastReload && now - lastReload < RELOAD_COOLDOWN_MS) {
+      markSessionExpired();
+      return;
+    }
+    try { sessionStorage.setItem(RELOAD_KEY, String(now)); } catch (_) {}
+    location.reload();
+  }
+
   setInterval(function() {
     if (sessionExpired) return;
     if (!sessionId) return;
@@ -59,15 +84,18 @@
     })
       .then(function(res) {
         if (res.status === 410) {
-          markSessionExpired();
+          attemptReloadOrExpire();
           return;
         }
-        if (res.ok) heartbeatFailCount = 0;
+        if (res.ok) {
+          heartbeatFailCount = 0;
+          try { sessionStorage.removeItem(RELOAD_KEY); } catch (_) {}
+        }
         else heartbeatFailCount++;
       })
       .catch(function() { heartbeatFailCount++; })
       .finally(function() {
-        if (heartbeatFailCount >= 3 && !sessionExpired) markSessionExpired();
+        if (heartbeatFailCount >= 3 && !sessionExpired) attemptReloadOrExpire();
       });
   }, 1000);
 
@@ -332,7 +360,7 @@
       body: JSON.stringify(body),
     });
     if (res.status === 410) {
-      markSessionExpired();
+      attemptReloadOrExpire();
       throw new Error('Session expired.');
     }
     if (!res.ok) {
@@ -392,7 +420,7 @@
     try {
       var res = await fetch('/api/pending', { headers: sessionHeaders() });
       if (res.status === 410) {
-        markSessionExpired();
+        attemptReloadOrExpire();
       } else if (res.ok) {
         var data = await res.json();
         syncPendingList(data.requests || []);

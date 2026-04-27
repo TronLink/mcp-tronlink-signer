@@ -89,7 +89,11 @@ export class TronSigner {
         /* caller's problem */
       }
     });
-    promise.finally(() => this.broadcastListeners.delete(id));
+    // then(fn, fn) instead of finally(fn): finally preserves the rejection,
+    // creating a floating rejected promise on WALLET_CHANGED/timeout. The cleanup
+    // here is a side-effect — the original rejection still reaches awaiters.
+    const cleanup = () => this.broadcastListeners.delete(id);
+    promise.then(cleanup, cleanup);
   }
 
   async start(): Promise<void> {
@@ -159,7 +163,9 @@ export class TronSigner {
     }
     const onAbort = () => this.pendingStore.reject(id, "CANCELLED_BY_CALLER");
     signal.addEventListener("abort", onAbort, { once: true });
-    promise.finally(() => signal.removeEventListener("abort", onAbort));
+    // then(fn, fn) instead of finally(fn): see registerBroadcastListener.
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    promise.then(cleanup, cleanup);
     return false;
   }
 
@@ -168,7 +174,7 @@ export class TronSigner {
     const { id, promise } = this.pendingStore.create("connect", {}, net);
     const cancelled = this.attachAbortSignal(id, promise, options?.signal);
     if (!cancelled) {
-      await openApprovalPage(this.getPort(), id);
+      await openApprovalPage(this.getPort(), this.httpServer.getSessionId(), id);
     }
     const result = (await promise) as { address: string; network: string };
     this.connectedWallet = { address: result.address, network: result.network as TronNetwork };
@@ -193,7 +199,7 @@ export class TronSigner {
     const cancelled = this.attachAbortSignal(id, promise, options?.signal);
     if (options?.onBroadcasted) this.registerBroadcastListener(id, promise, options.onBroadcasted);
     if (!cancelled) {
-      await openApprovalPage(this.getPort(), id);
+      await openApprovalPage(this.getPort(), this.httpServer.getSessionId(), id);
     }
     const broadcasted = (await promise) as BroadcastResult;
     return this.confirmIfNeeded(broadcasted, net, options);
@@ -218,7 +224,7 @@ export class TronSigner {
     const cancelled = this.attachAbortSignal(id, promise, options?.signal);
     if (options?.onBroadcasted) this.registerBroadcastListener(id, promise, options.onBroadcasted);
     if (!cancelled) {
-      await openApprovalPage(this.getPort(), id);
+      await openApprovalPage(this.getPort(), this.httpServer.getSessionId(), id);
     }
     const broadcasted = (await promise) as BroadcastResult;
     return this.confirmIfNeeded(broadcasted, net, options);
@@ -230,7 +236,7 @@ export class TronSigner {
     const { id, promise } = this.pendingStore.create("sign_message", data, net);
     const cancelled = this.attachAbortSignal(id, promise, options?.signal);
     if (!cancelled) {
-      await openApprovalPage(this.getPort(), id);
+      await openApprovalPage(this.getPort(), this.httpServer.getSessionId(), id);
     }
     const result = (await promise) as { signature: string };
     return result;
@@ -246,7 +252,7 @@ export class TronSigner {
     const { id, promise } = this.pendingStore.create("sign_typed_data", data, net);
     const cancelled = this.attachAbortSignal(id, promise, options?.signal);
     if (!cancelled) {
-      await openApprovalPage(this.getPort(), id);
+      await openApprovalPage(this.getPort(), this.httpServer.getSessionId(), id);
     }
     const result = (await promise) as { signature: string };
     return result;
@@ -267,7 +273,7 @@ export class TronSigner {
     const cancelled = this.attachAbortSignal(id, promise, options?.signal);
     if (broadcast && options?.onBroadcasted) this.registerBroadcastListener(id, promise, options.onBroadcasted);
     if (!cancelled) {
-      await openApprovalPage(this.getPort(), id);
+      await openApprovalPage(this.getPort(), this.httpServer.getSessionId(), id);
     }
     const result = (await promise) as {
       signedTransaction: Record<string, unknown>;
