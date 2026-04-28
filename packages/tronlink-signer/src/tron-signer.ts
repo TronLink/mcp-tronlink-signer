@@ -398,18 +398,60 @@ function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-// Decode Solidity Error(string) revert: 0x08c379a0 + offset(32) + length(32) + data
+// Decode the revert payload from contractResult / constant_result. Recognizes
+// the two Solidity-emitted forms (Error(string), Panic(uint256)) and falls
+// through to a selector + args breakdown for custom errors so callers can
+// resolve them externally (4byte.directory or contract ABI). Returns null only
+// when the input is empty.
+const PANIC_REASONS: Record<number, string> = {
+  0x00: "generic compiler panic",
+  0x01: "assertion failed",
+  0x11: "arithmetic overflow or underflow",
+  0x12: "division or modulo by zero",
+  0x21: "conversion to invalid enum value",
+  0x22: "storage byte array incorrectly encoded",
+  0x31: "pop on empty array",
+  0x32: "array out-of-bounds access",
+  0x41: "memory allocation too large or array too large",
+  0x51: "call to invalid internal function",
+};
+
 function decodeRevertReason(hex?: string): string | null {
-  if (!hex || hex.length < 136) return null;
-  if (hex.slice(0, 8).toLowerCase() !== "08c379a0") return null;
-  try {
-    const length = parseInt(hex.slice(72, 136), 16);
-    if (!Number.isFinite(length) || length <= 0) return null;
-    const dataStart = 136;
-    const dataEnd = dataStart + length * 2;
-    if (dataEnd > hex.length) return null;
-    return Buffer.from(hex.slice(dataStart, dataEnd), "hex").toString("utf8");
-  } catch {
-    return null;
+  if (!hex) return null;
+  const stripped = (hex.startsWith("0x") ? hex.slice(2) : hex).toLowerCase();
+  if (!stripped) return null;
+
+  const selector = stripped.slice(0, 8);
+  const args = stripped.slice(8);
+
+  if (selector === "08c379a0" && args.length >= 128) {
+    try {
+      const length = parseInt(args.slice(64, 128), 16);
+      if (Number.isFinite(length) && length > 0) {
+        const dataEnd = 128 + length * 2;
+        if (dataEnd <= args.length) {
+          const decoded = Buffer.from(args.slice(128, dataEnd), "hex").toString("utf8");
+          if (decoded) return decoded;
+        }
+      }
+    } catch { /* fall through */ }
+    return "Contract reverted";
   }
+
+  if (selector === "4e487b71" && args.length >= 64) {
+    const code = parseInt(args.slice(0, 64), 16);
+    if (Number.isFinite(code)) {
+      const codeStr = `0x${code.toString(16).padStart(2, "0")}`;
+      const reason = PANIC_REASONS[code];
+      return reason ? `Panic(${codeStr}): ${reason}` : `Panic(${codeStr})`;
+    }
+  }
+
+  if (selector.length === 8) {
+    return args
+      ? `Contract reverted with custom error 0x${selector} (args 0x${args})`
+      : `Contract reverted with custom error 0x${selector}`;
+  }
+
+  return "Contract reverted";
 }
