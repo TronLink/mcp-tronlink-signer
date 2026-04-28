@@ -396,7 +396,12 @@
     updateRowByLabel(detailsEl, 'Amount', text);
   }
 
-  async function fetchTrc20Info(trc20, detailsEl) {
+  // isStale: optional () => boolean. When it returns true, the lookup must
+  // not write to detailsEl — the user has switched to a different request
+  // and the shared DOM now belongs to that request.
+  function stale(isStale) { return typeof isStale === 'function' && isStale(); }
+
+  async function fetchTrc20Info(trc20, detailsEl, isStale) {
     try {
       var tronWeb = window.TronWallet.getTronWeb();
       if (!tronWeb) {
@@ -404,13 +409,16 @@
         tronWeb = window.TronWallet.getTronWeb();
       }
       if (!tronWeb) return;
+      if (stale(isStale)) return;
 
       var addr = fromHexAddress(trc20.contractHex);
       var contract = await tronWeb.contract().at(addr);
+      if (stale(isStale)) return;
       var decimals = 6;
       var symbol = '';
       try { decimals = Number(await contract.methods.decimals().call()); } catch(e) {}
       try { symbol = await contract.methods.symbol().call(); } catch(e) {}
+      if (stale(isStale)) return;
 
       var raw = BigInt(trc20.rawAmount);
       var divisor = 10n ** BigInt(decimals);
@@ -423,11 +431,12 @@
       }
       updateAmountRow(detailsEl, formatted + (symbol ? ' ' + symbol : ''));
     } catch(e) {
+      if (stale(isStale)) return;
       updateAmountRow(detailsEl, trc20.rawAmount + ' (raw)');
     }
   }
 
-  async function fetchWithdrawAmount(ownerAddress, detailsEl) {
+  async function fetchWithdrawAmount(ownerAddress, detailsEl, isStale) {
     try {
       var tronWeb = window.TronWallet.getTronWeb();
       if (!tronWeb) {
@@ -435,8 +444,10 @@
         tronWeb = window.TronWallet.getTronWeb();
       }
       if (!tronWeb) return;
+      if (stale(isStale)) return;
 
       var account = await tronWeb.trx.getAccount(ownerAddress);
+      if (stale(isStale)) return;
       var total = 0;
       var now = Date.now();
       if (account.unfrozenV2 && account.unfrozenV2.length) {
@@ -448,18 +459,21 @@
       }
       updateAmountRow(detailsEl, fromSun(total));
     } catch(e) {
+      if (stale(isStale)) return;
       updateAmountRow(detailsEl, 'Unable to fetch');
     }
   }
 
-  async function fetchTrc10Info(trc10, detailsEl, fullHost) {
+  async function fetchTrc10Info(trc10, detailsEl, fullHost, isStale) {
     try {
       var res = await fetch(fullHost + '/wallet/getassetissuebyid', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ value: trc10.assetName })
       });
+      if (stale(isStale)) return;
       var token = await res.json();
+      if (stale(isStale)) return;
       var precision = token && token.precision ? token.precision : 0;
       var rawName = (token && token.abbr) || (token && token.name) || '';
       var name = '';
@@ -486,6 +500,7 @@
         updateAmountRow(detailsEl, raw.toString() + (name ? ' ' + name : ''));
       }
     } catch(e) {
+      if (stale(isStale)) return;
       updateAmountRow(detailsEl, trc10.rawAmount + ' (raw)');
     }
   }
@@ -531,7 +546,7 @@
     return out + (symbol ? ' ' + symbol : '');
   }
 
-  async function fetchTrc20AmountForCall(cc, detailsEl) {
+  async function fetchTrc20AmountForCall(cc, detailsEl, isStale) {
     if (!cc || !cc.tokenAmounts || !cc.tokenAmounts.length || !cc.rawArgs) return;
     try {
       var tronWeb = window.TronWallet.getTronWeb();
@@ -540,6 +555,7 @@
         tronWeb = window.TronWallet.getTronWeb();
       }
       if (!tronWeb) return;
+      if (stale(isStale)) return;
 
       // Cache per token address so we don't re-probe the same contract for swaps.
       var kindCache = {};
@@ -557,6 +573,7 @@
           if (kindCache[tokenHex]) info = kindCache[tokenHex];
           else info = kindCache[tokenHex] = await detectTokenKind(tronWeb, tokenHex);
         } catch(_) { continue; }
+        if (stale(isStale)) return;
 
         if (info.kind === 'trc20') {
           try { updateRowByKey(detailsEl, 'arg-' + entry.argIndex, formatTokenAmount(rawVal, info.decimals, info.symbol)); } catch(_) {}
@@ -596,7 +613,7 @@
     } catch(_) { return ''; }
   }
 
-  async function fetchContractCallAbi(cc, detailsEl) {
+  async function fetchContractCallAbi(cc, detailsEl, isStale) {
     if (!cc || cc.resolved) return;
     try {
       var tronWeb = window.TronWallet.getTronWeb();
@@ -605,9 +622,11 @@
         tronWeb = window.TronWallet.getTronWeb();
       }
       if (!tronWeb) return;
+      if (stale(isStale)) return;
 
       var base58 = fromHexAddress(cc.contractHex);
       var contractInfo = await tronWeb.trx.getContract(base58);
+      if (stale(isStale)) return;
       var entrys = contractInfo && contractInfo.abi && contractInfo.abi.entrys;
       if (!Array.isArray(entrys)) throw new Error('no abi');
 
@@ -645,6 +664,7 @@
         detailsEl.appendChild(row);
       });
     } catch(_) {
+      if (stale(isStale)) return;
       updateRowByKey(detailsEl, 'method', '0x' + cc.selector + ' (ABI unavailable)');
     }
   }

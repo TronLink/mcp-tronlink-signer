@@ -313,29 +313,38 @@
   // Async on-chain lookups (TRC10 precision, TRC20 decimals/symbol, unfrozen
   // withdraw amount). Must run AFTER ensureWalletReady completes any network
   // switch, otherwise they hit the wrong chain and fail silently.
+  //
+  // detailsEl is shared across requests (cleared by renderDetails on switch),
+  // and the lookups locate target rows by label/key. Without a guard, a
+  // lookup fired for request A that resolves after the user switched to B
+  // would clobber B's matching row (e.g. write A's TRC20 "1.0 USDT" into B's
+  // "Amount" row that holds "10 TRX"). isStale snapshots the request id at
+  // dispatch time so each lookup can no-op on stale resolutions.
   function runAsyncLookups(req) {
     if (!req || req.type !== 'sign_transaction') return;
     var data = req.data || {};
     var parsed;
     try { parsed = window.TxParser.parseTransaction(data.transaction); } catch (_) { return; }
     if (!parsed) return;
+    var snapshotId = req.id;
+    var isStale = function() { return currentRequestId !== snapshotId; };
     if (parsed._trc10 && req.networkConfig) {
-      window.TxParser.fetchTrc10Info(parsed._trc10, detailsEl, req.networkConfig.fullHost);
+      window.TxParser.fetchTrc10Info(parsed._trc10, detailsEl, req.networkConfig.fullHost, isStale);
     }
     if (parsed._trc20) {
-      window.TxParser.fetchTrc20Info(parsed._trc20, detailsEl);
+      window.TxParser.fetchTrc20Info(parsed._trc20, detailsEl, isStale);
     }
     if (parsed._withdrawOwner) {
-      window.TxParser.fetchWithdrawAmount(parsed._withdrawOwner, detailsEl);
+      window.TxParser.fetchWithdrawAmount(parsed._withdrawOwner, detailsEl, isStale);
     }
     if (parsed._contractCall) {
       var cc = parsed._contractCall;
       if (cc.resolved) {
         if (cc.tokenAmounts && cc.tokenAmounts.length) {
-          window.TxParser.fetchTrc20AmountForCall(cc, detailsEl);
+          window.TxParser.fetchTrc20AmountForCall(cc, detailsEl, isStale);
         }
       } else {
-        window.TxParser.fetchContractCallAbi(cc, detailsEl);
+        window.TxParser.fetchContractCallAbi(cc, detailsEl, isStale);
       }
     }
   }

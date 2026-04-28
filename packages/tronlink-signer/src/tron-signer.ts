@@ -103,9 +103,14 @@ export class TronSigner {
     // Emit onBrowserDisconnect on alive→not-alive transition. Cold browser
     // startup (Chrome launching, TronLink service worker waking) can easily
     // take >5s on slower machines, which would falsely flip the watcher to
-    // "disconnected" before the first real heartbeat ever arrives. Treat the
-    // process startup window AND each fresh openApprovalPage as "alive" so
-    // those gaps don't trigger a phantom disconnect.
+    // "disconnected" before the first real heartbeat ever arrives. The grace
+    // windows (startup + per-openApprovalPage) suppress the transition fire
+    // while a real heartbeat is still en route.
+    //
+    // wasAlive is only set true by a *real* heartbeat — never by grace alone.
+    // Otherwise an idle process (daemon mode with no commands yet, MCP server
+    // waiting on its first tool call) would record "alive" during grace, then
+    // emit a phantom disconnect the moment grace expires.
     const DISCONNECT_TIMEOUT = 5_000;
     const STARTUP_GRACE_MS = 30_000;
     const PAGE_OPEN_GRACE_MS = 15_000;
@@ -113,16 +118,18 @@ export class TronSigner {
     let wasAlive = false;
     this.browserWatchTimer = setInterval(() => {
       const hb = getLastHeartbeat();
-      const realAlive = hb > 0 && Date.now() - hb < DISCONNECT_TIMEOUT;
+      const alive = hb > 0 && Date.now() - hb < DISCONNECT_TIMEOUT;
       const inStartGrace = Date.now() - startedAt < STARTUP_GRACE_MS;
       const lastOpen = getLastPageOpenAt();
       const inOpenGrace = lastOpen > 0 && Date.now() - lastOpen < PAGE_OPEN_GRACE_MS;
-      const alive = realAlive || inStartGrace || inOpenGrace;
-      if (wasAlive && !alive) {
+      const inGrace = inStartGrace || inOpenGrace;
+      if (wasAlive && !alive && !inGrace) {
         this.connectedWallet = null;
         if (this._onBrowserDisconnect) this._onBrowserDisconnect();
+        wasAlive = false;
+      } else if (alive) {
+        wasAlive = true;
       }
-      wasAlive = alive;
     }, 1000);
   }
 
