@@ -45,7 +45,7 @@
   "dependencies": {
     "express": "5.2.1",
     "open": "11.0.0",
-    "tronweb": "6.3.0"
+    "tronweb": "6.5.1"
   },
   "devDependencies": {
     "@types/express": "5.0.6",
