@@ -72,14 +72,16 @@
         return await broadcastOnly(tronWeb, signedTx, callbacks);
       }
       case 'send_trc20': {
-        // Caller-provided decimals win. When omitted, query the contract's
-        // decimals() view — falling back to a hardcoded default would silently
-        // misencode 18dp tokens (USDD/SUN/JST) by 10^12. Better to surface a
-        // clear error than to send the wrong amount.
-        var decimals;
-        if (data.decimals !== undefined && data.decimals !== null) {
-          decimals = data.decimals;
-        } else {
+        // Always resolve the token's precision from the contract's decimals() — a
+        // wrong magnitude silently mis-sends by 10^N (18 vs a real 6 over-sends by
+        // 10^12). The optional caller-provided `decimals` is an ASSERTION, not an
+        // override: it must equal the on-chain decimals() or we refuse. If decimals()
+        // can't be read for ANY reason — no such method, a revert, or a node failure
+        // (all of which throw, and aren't reliably distinguishable) — we fail closed
+        // rather than sign a transfer whose magnitude we can't verify.
+        var onChainDecimals;
+        var decHex;
+        try {
           var decResult = await tronWeb.transactionBuilder.triggerConstantContract(
             data.contractAddress,
             'decimals()',
@@ -87,15 +89,28 @@
             [],
             tronWeb.defaultAddress.base58
           );
-          var decHex = decResult && decResult.constant_result && decResult.constant_result[0];
-          if (!decHex) {
-            throw new Error('Could not auto-detect token decimals (contract did not return decimals()). Pass `decimals` explicitly.');
-          }
-          decimals = parseInt(decHex, 16);
-          if (!Number.isFinite(decimals) || decimals < 0 || decimals > 18) {
-            throw new Error('Auto-detected decimals out of range (got ' + decHex + '). Pass `decimals` explicitly.');
-          }
+          decHex = decResult && decResult.constant_result && decResult.constant_result[0];
+          onChainDecimals = decHex ? parseInt(decHex, 16) : NaN;
+        } catch (e) {
+          throw new Error(
+            'Could not read the token contract\'s decimals() (' + ((e && e.message) || 'request failed') +
+            '). Refusing to send — the amount magnitude cannot be verified. Check the contract address and network, then retry.'
+          );
         }
+        if (!Number.isFinite(onChainDecimals) || onChainDecimals < 0 || onChainDecimals > 18) {
+          throw new Error(
+            'Token contract returned no valid decimals() (got ' + (decHex || 'empty') +
+            '). Refusing to send — the amount magnitude cannot be verified.'
+          );
+        }
+        if (data.decimals !== undefined && data.decimals !== null && Number(data.decimals) !== onChainDecimals) {
+          throw new Error(
+            'Provided decimals (' + data.decimals + ') disagrees with the contract\'s on-chain decimals() (' + onChainDecimals +
+            '). Refusing to send to avoid a 10^' + Math.abs(onChainDecimals - Number(data.decimals)) +
+            ' magnitude error. Pass the correct decimals or omit it to auto-detect.'
+          );
+        }
+        var decimals = onChainDecimals;
         var amountStr = String(data.amount).trim();
         if (!/^\d+(\.\d+)?$/.test(amountStr)) {
           throw new Error('Invalid amount format: ' + data.amount);
@@ -105,9 +120,6 @@
         var fracInput = parts[1] || '';
         if (fracInput.length > decimals) {
           throw new Error('Amount has too many decimal places (max ' + decimals + ' for this token). Got: ' + data.amount);
-        }
-        if (decimals > 18) {
-          throw new Error('Decimals too large (max 18). Got: ' + decimals);
         }
         var frac = decimals > 0 ? fracInput.padEnd(decimals, '0') : '';
         var multiplier = 10n ** BigInt(decimals);
@@ -155,12 +167,20 @@
         // ("Provided chainId X must match active chainId Y"). Validating here too
         // keeps us safe if a future TronLink build relaxes that check, and gives
         // the caller a clearer error before the wallet round-trip.
+        //
+        // chainId itself is optional per EIP-712, so leave undefined/null alone
+        // (legitimate chain-agnostic flows: login, off-chain consent). But if a
+        // value *was* provided, it must be a finite number — silently accepting
+        // NaN/garbage would defeat the defense-in-depth this block exists for.
         var TRON_CHAIN_IDS = { mainnet: 728126428, nile: 3448148188, shasta: 2494104990 };
         var currentNetwork = window.TronWallet.getCurrentNetwork();
         var expectedChainId = TRON_CHAIN_IDS[currentNetwork];
-        if (domain.chainId !== undefined && domain.chainId !== null && expectedChainId) {
+        if (domain.chainId !== undefined && domain.chainId !== null) {
           var claimed = Number(domain.chainId);
-          if (Number.isFinite(claimed) && claimed !== expectedChainId) {
+          if (!Number.isFinite(claimed)) {
+            throw new Error('typedData.domain.chainId must be a finite number, got ' + JSON.stringify(domain.chainId));
+          }
+          if (expectedChainId && claimed !== expectedChainId) {
             throw new Error(
               'chainId mismatch: typedData claims ' + domain.chainId +
               ', wallet is on ' + currentNetwork + ' (chainId ' + expectedChainId + ')'

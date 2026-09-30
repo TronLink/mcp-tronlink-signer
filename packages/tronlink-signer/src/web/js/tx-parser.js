@@ -223,8 +223,16 @@
             var decoded = decodeCall(argsHex, known.inputs);
             baseRows.push({ l: 'Method', v: known.name, k: 'method' });
             if (decoded) {
+              // 0x23b872dd is shared between TRC20 transferFrom(amount) and TRC721
+              // transferFrom(tokenId). We don't know which until detectTokenKind
+              // resolves async — surface the ambiguity in the row label up-front,
+              // and let fetchTrc20AmountForCall narrow it to "amount"/"tokenId"
+              // once the probe returns. ambiguousKind on _contractCall tells
+              // app.js to gate the Approve button until that resolution lands.
+              var ambiguousTransferFrom = methodSig === '23b872dd';
               decoded.rows.forEach(function(arg, i) {
-                baseRows.push({ l: arg.name, v: arg.display, k: 'arg-' + i });
+                var label = (ambiguousTransferFrom && i === 2) ? 'amount or tokenId' : arg.name;
+                baseRows.push({ l: label, v: arg.display, k: 'arg-' + i });
               });
               info._contractCall = {
                 contractHex: v.contract_address,
@@ -233,7 +241,8 @@
                 resolved: true,
                 rawArgs: decoded.raw,
                 inputs: known.inputs,
-                tokenAmounts: known.tokenAmounts
+                tokenAmounts: known.tokenAmounts,
+                ambiguousKind: ambiguousTransferFrom
               };
             } else {
               baseRows.push({ l: 'Data', v: truncateMiddle('0x' + (v.data || ''), 120), k: 'data' });
@@ -401,6 +410,50 @@
   // and the shared DOM now belongs to that request.
   function stale(isStale) { return typeof isStale === 'function' && isStale(); }
 
+  // Decode an ABI-encoded dynamic string (32B offset + 32B length + data) as
+  // returned by a view call like symbol(). Returns '' if not a clean printable
+  // string. (fromHexString above can't be used — it doesn't skip the ABI framing.)
+  function decodeAbiString(hex) {
+    if (typeof hex !== 'string' || hex.length < 128) return '';
+    try {
+      var len = parseInt(hex.slice(64, 128), 16);
+      if (!len || len > 128) return '';
+      var dataHex = hex.slice(128, 128 + len * 2);
+      var s = '';
+      for (var i = 0; i + 1 < dataHex.length; i += 2) s += String.fromCharCode(parseInt(dataHex.substr(i, 2), 16));
+      return /^[\x20-\x7E]+$/.test(s) ? s : '';
+    } catch(_) { return ''; }
+  }
+
+  // Read a TRC20's decimals (+ symbol) via explicit constant-contract selector
+  // calls. We deliberately do NOT use tronWeb.contract().at(addr).methods.X():
+  // that needs the node to return the contract ABI, which many TRC20s (e.g. USDD
+  // on Nile) don't expose — there `.methods.decimals` is undefined, the call
+  // throws, and callers silently fell back to 6 decimals, mis-displaying an 18dp
+  // amount by 10^12. The selector call needs no ABI and matches the send path
+  // (actions.js). Returns { decimals, symbol } or null when decimals is unknown.
+  async function fetchTokenMeta(tronWeb, contractHexOrBase58) {
+    // Accept both forms: base58 (starts with 'T', e.g. send_trc20's contractAddress)
+    // is passed through as-is; 41-hex (from a parsed raw tx) is normalized to base58.
+    // triggerConstantContract accepts either, but fromHexAddress would mangle base58.
+    var addr = (typeof contractHexOrBase58 === 'string' && contractHexOrBase58.charAt(0) === 'T')
+      ? contractHexOrBase58
+      : fromHexAddress(contractHexOrBase58);
+    var caller = (tronWeb.defaultAddress && tronWeb.defaultAddress.base58) || addr;
+    var decRes = await tronWeb.transactionBuilder.triggerConstantContract(addr, 'decimals()', {}, [], caller);
+    var decHex = decRes && decRes.constant_result && decRes.constant_result[0];
+    if (!decHex) return null;
+    var decimals = parseInt(decHex, 16);
+    if (!Number.isFinite(decimals) || decimals < 0 || decimals > 18) return null;
+    var symbol = '';
+    try {
+      var symRes = await tronWeb.transactionBuilder.triggerConstantContract(addr, 'symbol()', {}, [], caller);
+      var symHex = symRes && symRes.constant_result && symRes.constant_result[0];
+      if (symHex) symbol = decodeAbiString(symHex);
+    } catch(_) {}
+    return { decimals: decimals, symbol: symbol };
+  }
+
   async function fetchTrc20Info(trc20, detailsEl, isStale) {
     try {
       var tronWeb = window.TronWallet.getTronWeb();
@@ -411,29 +464,56 @@
       if (!tronWeb) return;
       if (stale(isStale)) return;
 
-      var addr = fromHexAddress(trc20.contractHex);
-      var contract = await tronWeb.contract().at(addr);
+      var meta = await fetchTokenMeta(tronWeb, trc20.contractHex);
       if (stale(isStale)) return;
-      var decimals = 6;
-      var symbol = '';
-      try { decimals = Number(await contract.methods.decimals().call()); } catch(e) {}
-      try { symbol = await contract.methods.symbol().call(); } catch(e) {}
-      if (stale(isStale)) return;
-
-      var raw = BigInt(trc20.rawAmount);
-      var divisor = 10n ** BigInt(decimals);
-      var whole = raw / divisor;
-      var frac = raw % divisor;
-      var formatted = whole.toString();
-      if (frac > 0n) {
-        var fracStr = frac.toString().padStart(Number(decimals), '0').replace(/0+$/, '');
-        formatted += '.' + fracStr;
+      // No silent default to 6 — a wrong-precision number is worse than an
+      // explicit "raw" the signer can recognize.
+      if (!meta) {
+        updateAmountRow(detailsEl, trc20.rawAmount + ' (raw — decimals unavailable)');
+        return;
       }
-      updateAmountRow(detailsEl, formatted + (symbol ? ' ' + symbol : ''));
+      updateAmountRow(detailsEl, formatTokenAmount(trc20.rawAmount, meta.decimals, meta.symbol));
     } catch(e) {
       if (stale(isStale)) return;
       updateAmountRow(detailsEl, trc20.rawAmount + ' (raw)');
     }
+  }
+
+  // For the send_trc20 request type the approval page only has the high-level
+  // fields (contract / to / amount) — there is no raw tx to parse, so unlike the
+  // sign_transaction path it never ran the token-metadata probe. Resolve
+  // decimals/symbol here so the Amount row reads "<amount> <symbol>" and the
+  // Decimals row shows the real precision instead of "auto-detect from contract".
+  // `contract` is the base58 address; `providedDecimals` non-null means the caller
+  // pinned decimals (leave that row alone). Best-effort: on any failure the static
+  // placeholder display is kept.
+  async function fetchSendTrc20Display(contract, amount, providedDecimals, detailsEl, isStale) {
+    try {
+      var tronWeb = window.TronWallet.getTronWeb();
+      if (!tronWeb) {
+        await window.TronWallet.waitForWallet(5000);
+        tronWeb = window.TronWallet.getTronWeb();
+      }
+      if (!tronWeb) return;
+      if (stale(isStale)) return;
+      var meta = await fetchTokenMeta(tronWeb, contract);
+      if (stale(isStale)) return;
+      if (!meta) return;
+      var pinned = !(providedDecimals === undefined || providedDecimals === null);
+      // Caller pinned a precision that contradicts the contract: the amount would be
+      // mis-scaled by 10^|diff| (18 vs a real 6 over-sends by 10^12). The SDK refuses
+      // to build this tx, but surface the conflict on the rows the human approves
+      // instead of quietly showing "<amount> <symbol>" as if it were fine.
+      if (pinned && Number.isFinite(meta.decimals) && Number(providedDecimals) !== meta.decimals) {
+        updateRowByLabel(detailsEl, 'Decimals', String(providedDecimals) + ' ⚠ contract reports ' + meta.decimals);
+        if (meta.symbol) updateRowByLabel(detailsEl, 'Amount', String(amount) + ' ' + meta.symbol + ' — ⚠ decimals mismatch');
+        return;
+      }
+      if (meta.symbol) updateRowByLabel(detailsEl, 'Amount', String(amount) + ' ' + meta.symbol);
+      if (!pinned) {
+        updateRowByLabel(detailsEl, 'Decimals', String(meta.decimals));
+      }
+    } catch(_) { /* keep the static display */ }
   }
 
   async function fetchWithdrawAmount(ownerAddress, detailsEl, isStale) {
@@ -516,19 +596,19 @@
 
   // Probe the contract to classify it. decimals() is cheapest and conclusive for TRC20;
   // on failure we fall back to ERC165 supportsInterface(0x80ac58cd) for TRC721.
+  // All probes use explicit selector calls (no ABI needed) — see fetchTokenMeta.
   // Returns one of: {kind:'trc20', decimals, symbol}, {kind:'trc721'}, {kind:'unknown'}.
   async function detectTokenKind(tronWeb, hexAddr) {
-    var base58 = fromHexAddress(hexAddr);
-    var contract = await tronWeb.contract().at(base58);
+    var meta = null;
+    try { meta = await fetchTokenMeta(tronWeb, hexAddr); } catch(_) {}
+    if (meta) return { kind: 'trc20', decimals: meta.decimals, symbol: meta.symbol };
     try {
-      var d = Number(await contract.methods.decimals().call());
-      var symbol = '';
-      try { symbol = await contract.methods.symbol().call(); } catch(_) {}
-      return { kind: 'trc20', decimals: d, symbol: symbol };
-    } catch(_) {}
-    try {
-      var isNft = await contract.methods.supportsInterface('0x80ac58cd').call();
-      if (isNft) return { kind: 'trc721' };
+      var addr = fromHexAddress(hexAddr);
+      var caller = (tronWeb.defaultAddress && tronWeb.defaultAddress.base58) || addr;
+      var siRes = await tronWeb.transactionBuilder.triggerConstantContract(
+        addr, 'supportsInterface(bytes4)', {}, [{ type: 'bytes4', value: '0x80ac58cd' }], caller);
+      var siHex = siRes && siRes.constant_result && siRes.constant_result[0];
+      if (siHex && BigInt('0x' + siHex) === 1n) return { kind: 'trc721' };
     } catch(_) {}
     return { kind: 'unknown' };
   }
@@ -577,6 +657,11 @@
 
         if (info.kind === 'trc20') {
           try { updateRowByKey(detailsEl, 'arg-' + entry.argIndex, formatTokenAmount(rawVal, info.decimals, info.symbol)); } catch(_) {}
+          // Resolve the up-front "amount or tokenId" ambiguity now that the probe
+          // confirmed fungible — mirror the 'tokenId' narrowing on the NFT branch.
+          if (cc.ambiguousKind && cc.selector === '23b872dd' && entry.argIndex === 2) {
+            updateLabelByKey(detailsEl, 'arg-' + entry.argIndex, 'amount');
+          }
         } else if (info.kind === 'trc721' && cc.selector === '23b872dd' && entry.argIndex === 2) {
           // TRC721 transferFrom — the 3rd arg is tokenId, not a token amount.
           updateLabelByKey(detailsEl, 'arg-' + entry.argIndex, 'tokenId');
@@ -673,6 +758,7 @@
     parseTransaction: parseTransaction,
     fetchTrc10Info: fetchTrc10Info,
     fetchTrc20Info: fetchTrc20Info,
+    fetchSendTrc20Display: fetchSendTrc20Display,
     fetchWithdrawAmount: fetchWithdrawAmount,
     fetchTrc20AmountForCall: fetchTrc20AmountForCall,
     fetchContractCallAbi: fetchContractCallAbi

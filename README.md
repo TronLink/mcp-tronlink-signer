@@ -43,6 +43,8 @@ claude mcp add -s user tronlink-signer -- npx mcp-tronlink-signer
 
 All tools support an optional `network` parameter (`mainnet` / `nile` / `shasta`), defaulting to `mainnet`.
 
+Inputs are validated at the MCP boundary: Tron addresses must be valid base58 (checksum-verified), and `sign_typed_data`'s EIP-712 `domain` is checked (`chainId`, when present, must match the active network; `verifyingContract`, when present, must be a recognizable address).
+
 ## Standalone SDK Usage
 
 ```ts
@@ -75,7 +77,7 @@ See [tronlink-signer README](./packages/tronlink-signer) for full API documentat
 
 1. AI agent (or your code) calls a signing method (e.g., `send_trx`)
 2. Local HTTP server starts on port 3386 and a **single browser tab** opens the approval page
-3. Approval page discovers wallet via **TIP-6963** protocol (fallback to `window.tron` / `window.tronLink`)
+3. Approval page discovers the wallet via **TIP-6963** (preferring TronLink's declared rdns/name), falling back to the injected `window.tronLink` / `window.tron` globals
 4. Auto-unlocks wallet and switches network if needed
 5. If the wallet is already connected, `connect_wallet` auto-completes without user interaction
 6. User reviews the request and clicks Approve / Reject
@@ -106,6 +108,14 @@ pnpm install
 pnpm build        # Build all packages (run this before typecheck — mcp-tronlink-signer imports the built tronlink-signer types)
 pnpm typecheck    # Type check all packages
 ```
+
+## Testing
+
+```bash
+pnpm test         # Build all packages, then run the full test suite
+```
+
+Automated tests are hermetic (no browser, network, or chain). Real-wallet end-to-end flows (connect / sign / send through TronLink) are verified manually via the driver scripts under `packages/tronlink-signer/scripts/e2e/`.
 
 ## Project Structure
 

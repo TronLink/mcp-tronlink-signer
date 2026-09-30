@@ -211,7 +211,20 @@ export class TronSigner {
     return this.connectedWallet;
   }
 
+  /**
+   * Validate a Tron base58 address (incl. checksum) at the SDK boundary.
+   * The MCP schema layer already does a regex check, but direct SDK callers
+   * skip that — keeping the validation here so both paths fail fast with a
+   * clear error instead of bubbling a TronWeb internal stack frames later.
+   */
+  private requireTronAddress(field: string, value: string): void {
+    if (typeof value !== "string" || !this.tronWeb.isAddress(value)) {
+      throw new Error(`Invalid Tron address for ${field}: ${JSON.stringify(value)}`);
+    }
+  }
+
   async sendTrx(to: string, amount: string | number, network?: TronNetwork, options?: SignerOptions): Promise<BroadcastResult> {
+    this.requireTronAddress("to", to);
     const net = this.resolveNetwork(network);
     const data: SendTrxData = { to, amount };
     const { id, promise } = this.pendingStore.create("send_trx", data, net);
@@ -232,6 +245,8 @@ export class TronSigner {
     network?: TronNetwork,
     options?: SignerOptions
   ): Promise<BroadcastResult> {
+    this.requireTronAddress("contractAddress", contractAddress);
+    this.requireTronAddress("to", to);
     const net = this.resolveNetwork(network);
     const data: SendTrc20Data = {
       contractAddress,
@@ -310,6 +325,7 @@ export class TronSigner {
   }
 
   async getBalance(address: string, network?: TronNetwork): Promise<{ balance: string; balanceSun: number }> {
+    this.requireTronAddress("address", address);
     const net = this.resolveNetwork(network);
     const tw = this.getTronWebFor(net);
     const balanceSun = await tw.trx.getBalance(address);

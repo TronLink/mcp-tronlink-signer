@@ -10,11 +10,23 @@
   var retryBtn = document.getElementById('retryBtn');
   var approveBtn = document.getElementById('approveBtn');
   var rejectBtn = document.getElementById('rejectBtn');
+  var APPROVE_LABEL_DEFAULT = approveBtn.textContent;
+  // Cap how long Approve stays disabled while identifying an ambiguous
+  // transferFrom (TRC20 amount vs TRC721 tokenId). A slow/unreachable node must
+  // not strand the user on a disabled button — see runAsyncLookups.
+  var IDENTIFY_TIMEOUT_MS = 8000;
 
   var pendingRequests = {};   // id -> request
   var pendingRequest = null;  // currently active request object
   var currentRequestId = null;
   var polling = false;
+  // Bumped whenever the active request changes or the UI is torn down. The
+  // transferFrom identify-gating captures the cycle at setup; its timer/probe
+  // callbacks no-op if the cycle has since advanced — so switching away from an
+  // ambiguous request (and back, restarting a fresh gating cycle) can't let the
+  // stale timer re-enable Approve or flash a spurious "network slow" warning.
+  var identifyCycle = 0;
+  var activeIdentifyTimer = null;
   // sessionId is injected into the HTML by the server (per-pageload). It never
   // travels in a response body — any local process that could read it over HTTP
   // would be able to forge approvals.
@@ -145,7 +157,18 @@
     var row = document.createElement('div');
     row.className = 'detail-row';
     if (rowKey) row.setAttribute('data-row-key', rowKey);
-    row.innerHTML = '<span class="label">' + label + '</span><span class="value">' + escapeHtml(String(value)) + '</span>';
+    // Build with textContent — the previous innerHTML concatenation escaped
+    // `value` but not `label`. All current callers pass static strings, but
+    // this page holds signing capability (sessionId + /api/complete/*id*) so
+    // an XSS regression would let any future malicious dynamic label forge
+    // approvals. textContent removes the foot-gun entirely.
+    var l = document.createElement('span');
+    l.className = 'label';
+    l.textContent = label;
+    var v = document.createElement('span');
+    v.className = 'value';
+    v.textContent = String(value);
+    row.append(l, v);
     detailsEl.appendChild(row);
   }
 
@@ -154,12 +177,26 @@
     rejectBtn.disabled = true;
   }
 
+  function resetApproveButton() {
+    approveBtn.disabled = false;
+    approveBtn.textContent = APPROVE_LABEL_DEFAULT;
+  }
+
+  // Invalidate any in-flight transferFrom identify-gating: advance the cycle (so
+  // the pending timer/probe callbacks no-op) and clear the outstanding timer.
+  function cancelIdentifyGating() {
+    identifyCycle++;
+    if (activeIdentifyTimer) { clearTimeout(activeIdentifyTimer); activeIdentifyTimer = null; }
+  }
+
   function clearActiveUI() {
+    cancelIdentifyGating();
     detailsEl.innerHTML = '';
     typeBadgeEl.style.display = 'none';
     networkBadgeEl.style.display = 'none';
     buttonGroup.style.display = 'none';
     retryGroup.style.display = 'none';
+    approveBtn.textContent = APPROVE_LABEL_DEFAULT;
   }
 
   // --- Tab bar ---
@@ -251,10 +288,11 @@
     if (id === currentRequestId) return;
     var req = pendingRequests[id];
     if (!req) return;
+    cancelIdentifyGating();
     console.error('[switchTo]', { id: id, type: req.type, network: req.network });
     currentRequestId = id;
     pendingRequest = req;
-    approveBtn.disabled = false;
+    resetApproveButton();
     rejectBtn.disabled = false;
     buttonGroup.style.display = 'none';
     retryGroup.style.display = 'none';
@@ -321,13 +359,22 @@
   // "Amount" row that holds "10 TRX"). isStale snapshots the request id at
   // dispatch time so each lookup can no-op on stale resolutions.
   function runAsyncLookups(req) {
-    if (!req || req.type !== 'sign_transaction') return;
+    if (!req) return;
     var data = req.data || {};
+    var snapshotId = req.id;
+    var isStale = function() { return currentRequestId !== snapshotId; };
+    // send_trc20 carries only high-level fields (no raw tx to parse) — resolve the
+    // token's decimals/symbol so the Amount/Decimals rows show real precision
+    // (e.g. "0.0001 USDD" / "18") instead of the "auto-detect from contract"
+    // placeholder. Reuses the same fetchTokenMeta as the sign_transaction path.
+    if (req.type === 'send_trc20') {
+      window.TxParser.fetchSendTrc20Display(data.contractAddress, data.amount, data.decimals, detailsEl, isStale);
+      return;
+    }
+    if (req.type !== 'sign_transaction') return;
     var parsed;
     try { parsed = window.TxParser.parseTransaction(data.transaction); } catch (_) { return; }
     if (!parsed) return;
-    var snapshotId = req.id;
-    var isStale = function() { return currentRequestId !== snapshotId; };
     if (parsed._trc10 && req.networkConfig) {
       window.TxParser.fetchTrc10Info(parsed._trc10, detailsEl, req.networkConfig.fullHost, isStale);
     }
@@ -341,7 +388,39 @@
       var cc = parsed._contractCall;
       if (cc.resolved) {
         if (cc.tokenAmounts && cc.tokenAmounts.length) {
-          window.TxParser.fetchTrc20AmountForCall(cc, detailsEl, isStale);
+          // fetchTrc20AmountForCall swallows errors internally, so this Promise
+          // settles either way.
+          var probe = Promise.resolve(window.TxParser.fetchTrc20AmountForCall(cc, detailsEl, isStale));
+          // For selectors shared between fungible and NFT semantics (currently
+          // only 0x23b872dd transferFrom), the displayed "amount" can actually be
+          // a tokenId. Block Approve until detectTokenKind resolves so the user
+          // can't sign a stale misread — but cap the wait: a slow/unreachable node
+          // must not strand the user on a permanently-disabled button (they could
+          // otherwise only Reject). On timeout, re-enable and flag the unresolved
+          // ambiguity so the "amount or tokenId" row gets a deliberate look.
+          if (cc.ambiguousKind) {
+            // Capture the gating cycle: a later switch/teardown advances it, so a
+            // stale timer/probe from this cycle can't re-enable Approve on a newer
+            // request — or on this same request re-opened with a fresh gating.
+            var myCycle = identifyCycle;
+            approveBtn.disabled = true;
+            approveBtn.textContent = 'Identifying token…';
+            var settled = false;
+            var release = function(timedOut) {
+              if (settled || isStale() || myCycle !== identifyCycle) return;
+              settled = true;
+              activeIdentifyTimer = null;
+              resetApproveButton();
+              if (timedOut) {
+                setStatus('Could not confirm token type (network slow). This may be an NFT transfer — check the "amount or tokenId" value before approving.', 'error');
+              }
+            };
+            if (activeIdentifyTimer) clearTimeout(activeIdentifyTimer);
+            var idTimer = setTimeout(function() { release(true); }, IDENTIFY_TIMEOUT_MS);
+            activeIdentifyTimer = idTimer;
+            probe.then(function() { clearTimeout(idTimer); release(false); },
+                       function() { clearTimeout(idTimer); release(false); });
+          }
         }
       } else {
         window.TxParser.fetchContractCallAbi(cc, detailsEl, isStale);

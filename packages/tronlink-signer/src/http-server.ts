@@ -82,8 +82,14 @@ export class HttpServer {
   }
 
   private setupRoutes(): void {
-    this.app.use(express.json());
+    // originGuard runs BEFORE the body parser so a forbidden host/origin is
+    // rejected without us parsing its body first (avoids a local DoS-amplification
+    // where a rejected request still costs a full 2mb parse). Then parse JSON with
+    // a raised limit: a signed contract-deploy / large-data transaction's
+    // raw_data_hex easily exceeds express's 100KB default, which would otherwise
+    // 413 the /api/complete POST and hang the request until the 5-minute timeout.
     this.app.use(this.originGuard);
+    this.app.use(express.json({ limit: "2mb" }));
 
     // Browsers will cache 410 Gone (Session expired) by default per RFC 7234,
     // which traps the SPA into "Waiting..." after a daemon restart. The SPA

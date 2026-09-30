@@ -8,6 +8,7 @@ import {
   SignTransactionSchema,
   ConnectWalletSchema,
   GetBalanceSchema,
+  validateTypedDataDomain,
 } from "./schemas.js";
 import pkg from "../package.json" with { type: "json" };
 
@@ -104,8 +105,13 @@ export function createMcpServer(signer: TronSigner): McpServer {
     `Sign EIP-712 typed data. ${SIGN_NOTICE}`,
     SignTypedDataSchema.shape,
     async ({ typedData, network }, extra) => {
-      console.error(`\n🔔 [mcp-tronlink-signer] Waiting for typed data signing approval in browser...\n`);
       try {
+        // Validate the EIP-712 domain (chainId binding + verifyingContract form)
+        // BEFORE announcing — a bad domain errors immediately, without the
+        // misleading "waiting for browser approval" log or opening the browser.
+        // Resolve network exactly as the SDK does: explicit arg, else config default.
+        validateTypedDataDomain(typedData, network ?? signer.getConfig().network);
+        console.error(`\n🔔 [mcp-tronlink-signer] Waiting for typed data signing approval in browser...\n`);
         const result = await signer.signTypedData(typedData, network, { signal: extra.signal });
         return signingResult(result);
       } catch (e) {

@@ -1,6 +1,6 @@
 {
   "name": "mcp-tronlink-signer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "MCP Server for signing Tron transactions via TronLink browser wallet",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,7 +10,8 @@
   },
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
   },
   "keywords": [
     "mcp-tronlink-signer",
@@ -40,13 +41,14 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "tronlink-signer": "workspace:*",
-    "zod": "^4.3.6"
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
-    "tsup": "^8.5.1",
-    "typescript": "^5.7.3"
+    "@types/node": "25.6.0",
+    "tsup": "8.5.1",
+    "tsx": "4.22.3",
+    "typescript": "5.9.3"
   }
 }

@@ -26,9 +26,11 @@ await signer.stop();
 
 ## API
 
-### `new TronSigner(config?: Partial<AppConfig>)`
+### `new TronSigner()`
 
-Creates a new signer instance. If no config is provided, it reads from environment variables via `loadConfig()`.
+Creates a new signer instance. Configuration is read from environment variables via `loadConfig()` (`TRON_NETWORK`, `TRON_HTTP_PORT`, `TRON_API_KEY`). The constructor takes no arguments.
+
+> **Address validation:** `sendTrx`, `sendTrc20`, and `getBalance` validate every Tron address (base58 checksum, via `TronWeb.isAddress`) up front and throw `Invalid Tron address for <field>` before any network call. Valid addresses are unaffected.
 
 ### `signer.start(): Promise<void>`
 
@@ -88,6 +90,8 @@ const { signature } = await signer.signTypedData({
   message: { contents: "Hello Tron!" },
 });
 ```
+
+> **chainId binding:** `domain.chainId` is optional (chain-agnostic flows like login/off-chain consent are allowed). When present, it **must** match the target network's Tron chainId (mainnet `728126428`, nile `3448148188`, shasta `2494104990`) — the approval page rejects a mismatch before signing.
 
 ### `signer.signTransaction(transaction, network?, broadcast?, options?): Promise<{ signedTransaction; txId?; status?; error? }>`
 
@@ -195,7 +199,7 @@ try {
 
 1. Your code calls a signing method (e.g., `signMessage`)
 2. A local HTTP server starts on port 3386 and a **single browser tab** opens the approval page
-3. The approval page discovers the wallet via **TIP-6963** protocol (fallback to `window.tron`)
+3. The approval page discovers the wallet via **TIP-6963** (preferring TronLink's declared rdns/name), falling back to the injected `window.tronLink` / `window.tron` globals, and connects via `tron_requestAccounts`
 4. Auto-unlocks wallet and switches network if needed
 5. For `connectWallet`, if the wallet is already connected, it auto-completes without user interaction
 6. For signing/sending, the user reviews the transaction details and clicks Approve / Reject
@@ -266,6 +270,10 @@ interface BroadcastResult {
 ```ts
 // Class
 export { TronSigner } from "./tron-signer.js";
+
+// Address helper — true for a valid Tron base58 (checksum-verified) or 41-hex
+// address; false for 0x-prefixed EVM addresses. Backed by TronWeb.isAddress.
+export { isTronAddress } from "./address.js";
 
 // Config
 export { NETWORKS, DEFAULT_HTTP_PORT, REQUEST_TIMEOUT_MS, loadConfig } from "./config.js";

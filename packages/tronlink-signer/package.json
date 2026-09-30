@@ -1,6 +1,6 @@
 {
   "name": "tronlink-signer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "TronLink browser wallet signer SDK for TRON transactions",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.mjs test/*.test.ts"
   },
   "keywords": [
     "tronlink-signer",
@@ -42,14 +43,15 @@
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^5.2.1",
-    "open": "^11.0.0",
-    "tronweb": "^6.2.2"
+    "express": "5.2.1",
+    "open": "11.0.0",
+    "tronweb": "6.5.1"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6",
-    "@types/node": "^25.5.0",
-    "tsup": "^8.5.1",
-    "typescript": "^5.7.3"
+    "@types/express": "5.0.6",
+    "@types/node": "25.6.0",
+    "tsup": "8.5.1",
+    "tsx": "4.22.3",
+    "typescript": "5.9.3"
   }
 }

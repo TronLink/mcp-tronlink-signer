@@ -51,6 +51,13 @@ claude mcp add -s user tronlink-signer -- node /path/to/packages/mcp-tronlink-si
 
 All tools support an optional `network` parameter (`mainnet` / `nile` / `shasta`), defaulting to `mainnet`.
 
+### Input validation
+
+Arguments are validated strictly at the MCP boundary so the model gets a clean error instead of a deep stack trace:
+
+- **Tron addresses** (`to`, `contractAddress`, `address`) must be valid base58 (checksum-verified).
+- **`sign_typed_data` EIP-712 `domain`** is checked: `chainId`, when present, must be an integer equal to the active network's Tron chainId (mainnet `728126428` / nile `3448148188` / shasta `2494104990`); `verifyingContract`, when present, must be a recognizable Tron (base58 / 41-hex) or EVM (`0x`) address. Both are optional (chain-agnostic / contract-agnostic signing is allowed).
+
 ## MCP Resources
 
 | URI | Description |
@@ -70,7 +77,7 @@ All tools support an optional `network` parameter (`mainnet` / `nile` / `shasta`
 
 1. AI agent calls an MCP tool (e.g., `send_trx`) — a signing notice is shown in the CLI
 2. The server delegates to `tronlink-signer`, which opens a **single browser tab** for approval (reuses existing tab if open)
-3. The approval page discovers TronLink via **TIP-6963** protocol
+3. The approval page discovers TronLink via **TIP-6963** (preferring its declared rdns/name), falling back to the injected `window.tronLink` / `window.tron` globals
 4. Auto-unlocks wallet and switches network if needed
 5. `connect_wallet` auto-completes if the wallet is already connected
 6. Transaction details are parsed into human-readable format (TRX transfer, TRC20, TRC721 NFT, stake, delegate, vote, etc.)
