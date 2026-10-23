@@ -4,6 +4,8 @@ MCP Server that exposes [tronlink-signer](https://github.com/TronLink/mcp-tronli
 
 ## Setup
 
+Requires **Node.js 24.22.1**.
+
 ### Claude Code
 
 ```bash

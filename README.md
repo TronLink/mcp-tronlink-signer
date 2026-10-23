@@ -10,6 +10,8 @@ Also provides a standalone SDK ([tronlink-signer](./packages/tronlink-signer)) f
 
 ## Quick Start
 
+Requires **Node.js 24.22.1**.
+
 ### Claude Code
 
 ```bash
@@ -102,6 +104,8 @@ All subsequent operations reuse the same browser tab. Each server session has a 
 | [tronlink-signer](./packages/tronlink-signer) | Standalone SDK — direct integration without MCP |
 
 ## Development
+
+Requires **Node.js 24.22.1**.
 
 ```bash
 pnpm install
