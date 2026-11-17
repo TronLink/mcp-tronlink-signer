@@ -4,7 +4,7 @@ Standalone SDK for signing TRON transactions via the TronLink browser wallet. Pr
 
 ## Installation
 
-Requires **Node.js 24.22.1**.
+Requires **Node.js 24.22.3**.
 
 ```bash
 npm install tronlink-signer
