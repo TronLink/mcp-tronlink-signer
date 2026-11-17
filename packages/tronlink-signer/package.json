@@ -1,6 +1,6 @@
 {
   "name": "tronlink-signer",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "TronLink browser wallet signer SDK for TRON transactions",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,7 +40,7 @@
     "url": "https://github.com/TronLink/mcp-tronlink-signer/issues"
   },
   "engines": {
-    "node": "24.22.1"
+    "node": "24.22.3"
   },
   "dependencies": {
     "express": "5.2.1",

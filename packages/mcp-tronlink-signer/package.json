@@ -1,6 +1,6 @@
 {
   "name": "mcp-tronlink-signer",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "MCP Server for signing Tron transactions via TronLink browser wallet",
   "type": "module",
   "main": "./dist/index.js",
@@ -38,7 +38,7 @@
     "url": "https://github.com/TronLink/mcp-tronlink-signer/issues"
   },
   "engines": {
-    "node": "24.22.1"
+    "node": "24.22.3"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
